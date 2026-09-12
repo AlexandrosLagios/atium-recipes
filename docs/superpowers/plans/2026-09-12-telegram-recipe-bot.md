@@ -1093,7 +1093,7 @@ def test_an_empty_parse_escalates_to_sonnet():
 
 def test_an_api_error_on_haiku_escalates_to_sonnet():
     error = anthropic.APIStatusError(
-        "bad request", response=type("Resp", (), {"status_code": 400, "headers": {}})(), body=None
+        "bad request", response=type("Resp", (), {"status_code": 400, "headers": {}, "request": None})(), body=None
     )
     client = FakeClient([error, FULL])
 
@@ -1111,7 +1111,7 @@ def test_two_empty_parses_return_none():
 
 def test_an_api_error_on_sonnet_is_raised():
     error = anthropic.APIStatusError(
-        "bad", response=type("Resp", (), {"status_code": 500, "headers": {}})(), body=None
+        "bad", response=type("Resp", (), {"status_code": 500, "headers": {}, "request": None})(), body=None
     )
     client = FakeClient([EMPTY, error])
 
