@@ -62,27 +62,23 @@ def test_a_scraped_page_is_high_confidence_and_the_scraper_facts_win(monkeypatch
     assert recipe.ingredients[0].name == "Cucumber"
 
 
-def test_the_scraper_facts_win_even_when_they_are_falsy(monkeypatch):
+def test_the_model_estimate_survives_when_the_scraper_found_no_time_or_servings(monkeypatch):
     scraped = ScrapeResult(
-        name="",
+        name="Overnight pickled vegetables",
         time_min=0,
         servings=0,
         ingredients=["2 medium cucumbers"],
-        method=[],
-        image_url="",
+        method=["Salt.", "Rest."],
+        image_url="https://example.com/cover.jpg",
     )
     monkeypatch.setattr(extract, "fetch_html", lambda url: "<html></html>")
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
     stub = StubExtractor()
 
-    recipe = extract.from_url("https://example.com/instant", stub, VOCAB)
+    recipe = extract.from_url("https://example.com/no-time-data", stub, VOCAB)
 
-    assert recipe.name == ""
-    assert recipe.time_min == 0
-    assert recipe.servings == 0
-    assert recipe.method == []
-    assert recipe.cuisine == "Chinese"
-    assert recipe.ingredients[0].name == "Cucumber"
+    assert recipe.time_min == 10
+    assert recipe.servings == 1
 
 
 def test_a_page_without_structured_data_is_low_confidence(monkeypatch):

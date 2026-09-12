@@ -60,13 +60,11 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
         source_text=scraped.as_prompt(),
         high_confidence=True,
     )
-    # Unconditional, not `or`: ScrapeResult's fields are always present once
-    # scrape_jsonld succeeds, even when falsy (0 minutes, no servings), and
-    # `or` would let the model's guess override a genuine scraped zero.
-    recipe.name = scraped.name
-    recipe.time_min = scraped.time_min
-    recipe.servings = scraped.servings
-    recipe.method = scraped.method
+    # The scraper read these from structured data, so they beat the model.
+    recipe.name = scraped.name or recipe.name
+    recipe.time_min = scraped.time_min or recipe.time_min
+    recipe.servings = scraped.servings or recipe.servings
+    recipe.method = scraped.method or recipe.method
     return recipe
 
 
