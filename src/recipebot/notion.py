@@ -4,7 +4,7 @@ from notion_client import Client
 from pydantic import BaseModel
 
 from .config import Config
-from .models import Ingredient, canonical_url
+from .models import Ingredient, Recipe, canonical_url
 
 
 class Vocabulary(BaseModel):
@@ -66,6 +66,41 @@ def _options(schema: dict, prop: str) -> list[str]:
     return [option["name"] for option in entry[entry["type"]]["options"]]
 
 
+RICH_TEXT_LIMIT = 2000
+CHILDREN_LIMIT = 100
+# ponytail: a Notion toggle's own children are not chunked, so the source text is
+# capped at 90 paragraphs (~171k characters). Chunk the toggle too if a real
+# transcript ever hits the cap.
+SOURCE_TEXT_BLOCK_LIMIT = 90
+
+
+def _rt(text: str) -> list[dict]:
+    return [{"type": "text", "text": {"content": text[:RICH_TEXT_LIMIT]}}]
+
+
+def _block(kind: str, text: str, **extra) -> dict:
+    return {"object": "block", "type": kind, kind: {"rich_text": _rt(text), **extra}}
+
+
+def _paragraphs(text: str) -> list[dict]:
+    chunks = [
+        text[i : i + RICH_TEXT_LIMIT] for i in range(0, len(text), RICH_TEXT_LIMIT)
+    ] or [""]
+    return [_block("paragraph", chunk) for chunk in chunks[:SOURCE_TEXT_BLOCK_LIMIT]]
+
+
+def _body_blocks(recipe: Recipe) -> list[dict]:
+    blocks = [_block("heading_2", "Ingredients")]
+    for item in recipe.ingredients:
+        line = f"{item.quantity} {item.name}".strip()
+        blocks.append(_block("bulleted_list_item", line))
+    blocks.append(_block("heading_2", "Method"))
+    blocks.extend(_block("numbered_list_item", step) for step in recipe.method)
+    blocks.append(_block("heading_2", "Notes"))
+    blocks.append(_block("toggle", "Source text", children=_paragraphs(recipe.source_text)))
+    return blocks
+
+
 class NotionStore:
     def __init__(self, client, recipes_ds: str, ingredients_ds: str):
         self.client = client
@@ -123,3 +158,34 @@ class NotionStore:
             },
         )
         return page["id"]
+
+    def create_recipe(self, recipe: Recipe, ingredient_page_ids: list[str]) -> str:
+        properties = {
+            "Name": {"title": _rt(recipe.name)},
+            "Source": {"select": {"name": recipe.source}},
+            "Cuisine": {"select": {"name": recipe.cuisine.split(",")[0].strip()}},
+            "Meal": {"multi_select": [{"name": meal} for meal in recipe.meal]},
+            "Difficulty": {"select": {"name": recipe.difficulty}},
+            "Time (min)": {"number": recipe.time_min},
+            "Servings": {"number": recipe.servings},
+            "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
+        }
+        target = canonical_url(recipe.source_url)
+        if target:
+            properties["Source URL"] = {"url": target}
+
+        blocks = _body_blocks(recipe)
+        create_args = {
+            "parent": {"type": "data_source_id", "data_source_id": self.recipes_ds},
+            "properties": properties,
+            "children": blocks[:CHILDREN_LIMIT],
+        }
+        if recipe.image_url:
+            create_args["cover"] = {"type": "external", "external": {"url": recipe.image_url}}
+
+        page = self.client.pages.create(**create_args)
+        for start in range(CHILDREN_LIMIT, len(blocks), CHILDREN_LIMIT):
+            self.client.blocks.children.append(
+                block_id=page["id"], children=blocks[start : start + CHILDREN_LIMIT]
+            )
+        return page["url"]

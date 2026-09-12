@@ -1,0 +1,119 @@
+from recipebot.models import Ingredient, Recipe
+from recipebot.notion import NotionStore
+
+
+class FakePages:
+    def __init__(self):
+        self.created = []
+
+    def create(self, **kwargs):
+        self.created.append(kwargs)
+        return {"id": "r1", "url": "https://notion.so/r1"}
+
+
+class FakeChildren:
+    def __init__(self):
+        self.appended = []
+
+    def append(self, **kwargs):
+        self.appended.append(kwargs)
+        return {}
+
+
+class FakeBlocks:
+    def __init__(self):
+        self.children = FakeChildren()
+
+
+class FakeClient:
+    def __init__(self):
+        self.pages = FakePages()
+        self.blocks = FakeBlocks()
+
+
+def a_recipe(**overrides) -> Recipe:
+    defaults = dict(
+        name="Overnight pickled vegetables",
+        cuisine="Chinese",
+        meal=["Side"],
+        difficulty="Easy",
+        time_min=745,
+        servings=4,
+        ingredients=[Ingredient(name="Cucumber", quantity="2 medium")],
+        method=["Salt the cucumber.", "Rest overnight."],
+        source="Web",
+        source_url="https://redhousespice.com/x/?utm_source=a",
+        image_url="https://redhousespice.com/cover.jpg",
+        source_text="raw body",
+    )
+    return Recipe(**{**defaults, **overrides})
+
+
+def test_create_recipe_writes_the_canonical_url_and_the_cover():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    url = store.create_recipe(a_recipe(), ["p2"])
+
+    assert url == "https://notion.so/r1"
+    call = client.pages.created[0]
+    assert call["parent"] == {"type": "data_source_id", "data_source_id": "ds-recipes"}
+    assert call["cover"] == {
+        "type": "external",
+        "external": {"url": "https://redhousespice.com/cover.jpg"},
+    }
+    props = call["properties"]
+    assert props["Source URL"]["url"] == "https://redhousespice.com/x/"
+    assert props["Time (min)"]["number"] == 745
+    assert props["Meal"]["multi_select"] == [{"name": "Side"}]
+    assert props["Ingredients"]["relation"] == [{"id": "p2"}]
+    assert "Rating" not in props
+    assert "Missing" not in props
+    assert "Missing count" not in props
+
+
+def test_create_recipe_omits_the_url_and_the_cover_when_absent():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(source="Photo", source_url="", image_url=""), [])
+
+    call = client.pages.created[0]
+    assert "Source URL" not in call["properties"]
+    assert "cover" not in call
+
+
+def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(), ["p2"])
+
+    blocks = client.pages.created[0]["children"]
+    headings = [
+        b["heading_2"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b["type"] == "heading_2"
+    ]
+    assert headings == ["Ingredients", "Method", "Notes"]
+
+    bullets = [b for b in blocks if b["type"] == "bulleted_list_item"]
+    assert bullets[0]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == "2 medium Cucumber"
+
+    numbered = [b for b in blocks if b["type"] == "numbered_list_item"]
+    assert len(numbered) == 2
+
+    toggle = next(b for b in blocks if b["type"] == "toggle")
+    assert toggle["toggle"]["rich_text"][0]["text"]["content"] == "Source text"
+    assert toggle["toggle"]["children"][0]["paragraph"]["rich_text"][0]["text"]["content"] == "raw body"
+
+
+def test_more_than_a_hundred_blocks_are_appended_in_chunks():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [])
+
+    assert len(client.pages.created[0]["children"]) == 100
+    assert client.blocks.children.appended[0]["block_id"] == "r1"
+    assert len(client.blocks.children.appended[0]["children"]) <= 100
