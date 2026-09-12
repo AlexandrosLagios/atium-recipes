@@ -2071,17 +2071,23 @@ Add this method to `NotionStore`:
         page_ids = list(plan.existing.values())
 
         undecided = list(plan.new)
-        for proposed, resembles in plan.near.items():
+        for proposed in plan.near:
             target = merges.get(proposed)
             if target and target in vocab.ingredients:
                 page_ids.append(vocab.ingredients[target])
             else:
                 undecided.append(proposed)
 
+        # Dedupe by name before creating, not by page ID after: two casings of one new
+        # name would otherwise become two Notion rows that no later dedupe can merge.
+        created: dict[str, str] = {}
         for name in undecided:
-            page_ids.append(
-                self.create_ingredient(name, categories.get(name, ""), vocab.categories)
-            )
+            key = name.strip().lower()
+            if key not in created:
+                created[key] = self.create_ingredient(
+                    name, categories.get(name, ""), vocab.categories
+                )
+            page_ids.append(created[key])
 
         return self.create_recipe(recipe, list(dict.fromkeys(page_ids)))
 ```
@@ -2325,6 +2331,7 @@ BLOCKED_MESSAGE = (
     "I could not open that post. Send me a screenshot of it and I will read that instead."
 )
 NO_RECIPE_MESSAGE = "I could not find a recipe in that."
+ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a different way."
 
 
 def first_url(text: str) -> str:
@@ -2334,12 +2341,29 @@ def first_url(text: str) -> str:
 
 def make_gate(allowed_user_id: int):
     async def gate(update, context) -> None:
-        user = getattr(update, "effective_user", None)
-        if user is None or user.id != allowed_user_id:
-            log.warning("dropped update from %s", getattr(user, "id", "unknown"))
+        seen_id = "unknown"
+        try:
+            user = getattr(update, "effective_user", None)
+            if user is not None:
+                seen_id = user.id
+            allowed = seen_id == allowed_user_id
+        except Exception:
+            allowed = False
+        if not allowed:
+            log.warning("dropped update from %s", seen_id)
             raise ApplicationHandlerStop
 
     return gate
+
+
+async def on_error(update, context) -> None:
+    log.exception("handler failed", exc_info=context.error)
+    user = getattr(update, "effective_user", None)
+    if user is None or user.id != context.bot_data["allowed_user_id"]:
+        return
+    message = getattr(update, "effective_message", None)
+    if message is not None:
+        await message.reply_text(ERROR_MESSAGE)
 
 
 async def handle_recipe(recipe: Recipe, store, vocab, update) -> None:
@@ -2417,13 +2441,19 @@ def build_application(cfg: Config, store: NotionStore, extractor: Extractor) -> 
     application = Application.builder().token(cfg.telegram_token).build()
     application.bot_data["store"] = store
     application.bot_data["extractor"] = extractor
+    application.bot_data["allowed_user_id"] = cfg.allowed_user_id
 
     application.add_handler(
         TypeHandler(Update, make_gate(cfg.allowed_user_id), block=True), group=-1
     )
+    application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
-    application.add_handler(MessageHandler(filters.PHOTO, on_photo))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    application.add_handler(
+        MessageHandler(filters.UpdateType.MESSAGE & filters.PHOTO, on_photo)
+    )
+    application.add_handler(
+        MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND, on_text)
+    )
     return application
 ```
 
