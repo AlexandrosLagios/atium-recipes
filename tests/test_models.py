@@ -54,6 +54,46 @@ def test_recipe_source_url_is_canonical_at_construction():
     assert recipe.source_url == "https://example.com/braise"
 
 
+def test_assigning_a_raw_source_url_is_canonicalised_too():
+    recipe = Recipe(
+        name="Braise",
+        cuisine="Chinese",
+        meal=["Dinner"],
+        difficulty="Easy",
+        time_min=90,
+        servings=4,
+        ingredients=[],
+        method=["Brown.", "Simmer."],
+        source="Web",
+    )
+
+    recipe.source_url = "https://example.com/braise?utm_source=x#top"
+
+    assert recipe.source_url == "https://example.com/braise"
+
+
+def test_the_scraper_may_still_overwrite_the_fields_extract_mutates():
+    recipe = Recipe(
+        name="Braise",
+        cuisine="Chinese",
+        meal=["Dinner"],
+        difficulty="Easy",
+        time_min=90,
+        servings=4,
+        ingredients=[],
+        method=["Brown."],
+        source="Web",
+    )
+
+    recipe.name = "Red braised pork"
+    recipe.time_min = max(120, recipe.time_min)
+    recipe.servings = 6
+    recipe.method = ["Brown.", "Simmer."]
+
+    assert (recipe.name, recipe.time_min, recipe.servings) == ("Red braised pork", 120, 6)
+    assert recipe.method == ["Brown.", "Simmer."]
+
+
 def test_from_extracted_carries_provenance():
     extracted = ExtractedRecipe(
         name="Overnight pickled vegetables",

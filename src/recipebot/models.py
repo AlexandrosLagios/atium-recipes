@@ -1,7 +1,7 @@
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 # The video id is the whole identity of a YouTube watch URL, so stripping the
@@ -40,6 +40,8 @@ class ExtractedRecipe(BaseModel):
 
 
 class Recipe(ExtractedRecipe):
+    model_config = ConfigDict(validate_assignment=True)
+
     source: str
     source_url: str = ""
     image_url: str = ""
