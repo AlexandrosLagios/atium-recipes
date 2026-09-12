@@ -1,8 +1,6 @@
 import asyncio
 from unittest.mock import AsyncMock
 
-import pytest
-
 from recipebot import bot
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
@@ -156,7 +154,7 @@ async def test_save_reports_already_saved_when_the_store_deduped_by_source_url()
     assert "Already saved: https://notion.so/existing" in reply
 
 
-async def test_a_save_failure_restores_the_preview_so_it_can_be_retried():
+async def test_a_save_failure_restores_the_preview_with_a_working_save_button():
     class FlakyStore:
         def __init__(self):
             self.calls = 0
@@ -174,13 +172,16 @@ async def test_a_save_failure_restores_the_preview_so_it_can_be_retried():
     bot.PREVIEWS["tok"] = preview
     update = make_update("save:tok")
 
-    with pytest.raises(RuntimeError):
-        await bot.on_callback(update, make_context(store))
+    await bot.on_callback(update, make_context(store))
 
     assert bot.PREVIEWS["tok"] is preview
-    failure_reply = update.callback_query.edit_message_text.call_args[0][0]
+    call = update.callback_query.edit_message_text.call_args
+    failure_reply = call[0][0]
     assert "failed" in failure_reply.lower()
     assert "save" in failure_reply.lower()
+    markup = call.kwargs["reply_markup"]
+    buttons = [(b.text, b.callback_data) for row in markup.inline_keyboard for b in row]
+    assert ("Save", "save:tok") in buttons
 
     retry = make_update("save:tok")
     await bot.on_callback(retry, make_context(store))

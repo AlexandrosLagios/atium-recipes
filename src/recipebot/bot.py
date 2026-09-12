@@ -133,8 +133,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     except Exception:
         PREVIEWS[token] = preview
-        await query.edit_message_text("Saving failed. Tap Save to try again.")
-        raise
+        log.exception("save_recipe failed for token %s", token)
+        await query.edit_message_text(
+            "Saving failed. Tap Save to try again.",
+            reply_markup=preview_markup(token, IngredientPlan(near=preview.merges)),
+        )
+        return
     message = f"Saved: {url}" if created else f"Already saved: {url}"
     await query.edit_message_text(message)
 
