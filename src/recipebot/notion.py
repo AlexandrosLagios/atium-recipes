@@ -20,9 +20,10 @@ class IngredientPlan(BaseModel):
     near: dict[str, str] = {}
 
 
-# ponytail: difflib is the whole "resembles an existing one" heuristic. It catches
-# plurals and casing, not synonyms ("aubergine" against "eggplant"). Swap in an
-# embedding lookup only if the user reports real duplicates slipping through.
+# ponytail: the exact-match lookup above already folds case, so difflib only
+# ever sees lowercase input. It catches plurals and typos, not synonyms
+# ("aubergine" against "eggplant"). Swap in an embedding lookup only if the
+# user reports real duplicates slipping through.
 def reconcile_ingredients(vocab: Vocabulary, ingredients: list[Ingredient]) -> IngredientPlan:
     lowered = {name.lower(): page_id for name, page_id in vocab.ingredients.items()}
     by_lower = {name.lower(): name for name in vocab.ingredients}
