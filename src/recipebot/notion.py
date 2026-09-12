@@ -1,5 +1,6 @@
 import logging
 from difflib import get_close_matches
+from itertools import batched
 
 from notion_client import Client
 from pydantic import BaseModel
@@ -28,42 +29,36 @@ class IngredientPlan(BaseModel):
 # ("aubergine" against "eggplant"). Swap in an embedding lookup only if the
 # user reports real duplicates slipping through.
 def reconcile_ingredients(vocab: Vocabulary, ingredients: list[Ingredient]) -> IngredientPlan:
-    lowered = {name.lower(): page_id for name, page_id in vocab.ingredients.items()}
-    by_lower = {name.lower(): name for name in vocab.ingredients}
+    by_lower = {
+        name.lower(): (name, page_id) for name, page_id in vocab.ingredients.items()
+    }
     plan = IngredientPlan()
     for item in ingredients:
         key = item.name.strip().lower()
         if not key:
             continue
-        if key in lowered:
-            plan.existing[item.name] = lowered[key]
+        if key in by_lower:
+            plan.existing[item.name] = by_lower[key][1]
             continue
-        close = get_close_matches(key, list(lowered), n=1, cutoff=0.85)
+        close = get_close_matches(key, list(by_lower), n=1, cutoff=0.85)
         if close:
-            plan.near[item.name] = by_lower[close[0]]
+            plan.near[item.name] = by_lower[close[0]][0]
         else:
             plan.new.append(item.name)
     return plan
 
 
-def _snap_category(category: str, categories: list[str]) -> str:
-    candidate = category.strip()
-    for known in categories:
-        if candidate.lower() == known.lower():
-            return known
-    close = get_close_matches(candidate.lower(), [c.lower() for c in categories], n=1, cutoff=0.7)
+def _snap_option(value: str, known: list[str], default: str = "") -> str:
+    candidate = value.split(",")[0].strip()
+    if not candidate:
+        return ""
+    lookup = {name.lower(): name for name in known}
+    if candidate.lower() in lookup:
+        return lookup[candidate.lower()]
+    close = get_close_matches(candidate.lower(), list(lookup), n=1, cutoff=0.7)
     if close:
-        return next(c for c in categories if c.lower() == close[0])
-    return "Staples"
-
-
-def _clean_option_name(name: str) -> str:
-    return name.split(",")[0].strip()
-
-
-def _clean_option_names(names: list[str]) -> list[str]:
-    cleaned = (_clean_option_name(name) for name in names)
-    return list(dict.fromkeys(name for name in cleaned if name))
+        return lookup[close[0]]
+    return default
 
 
 def _title_of(page: dict) -> str:
@@ -153,14 +148,16 @@ class NotionStore:
         target = canonical_url(url)
         if not target:
             return None
-        pages = self._all_pages(
-            self.recipes_ds,
+        result = self.client.data_sources.query(
+            data_source_id=self.recipes_ds,
             filter={"property": "Source URL", "url": {"equals": target}},
+            page_size=1,
         )
+        pages = result["results"]
         return pages[0]["url"] if pages else None
 
     def create_ingredient(self, name: str, category: str, categories: list[str]) -> str:
-        chosen = _snap_category(category, categories)
+        chosen = _snap_option(category, categories, "Staples")
         page = self.client.pages.create(
             parent={"type": "data_source_id", "data_source_id": self.ingredients_ds},
             properties={
@@ -171,24 +168,30 @@ class NotionStore:
         )
         return page["id"]
 
-    def create_recipe(self, recipe: Recipe, ingredient_page_ids: list[str]) -> str:
+    def create_recipe(
+        self, recipe: Recipe, ingredient_page_ids: list[str], vocab: Vocabulary
+    ) -> str:
+        meals = list(
+            dict.fromkeys(
+                name
+                for name in (_snap_option(entry, vocab.meals) for entry in recipe.meal)
+                if name
+            )
+        )
         properties = {
             "Name": {"title": _rt(recipe.name)},
             "Source": {"select": {"name": recipe.source}},
-            "Meal": {
-                "multi_select": [{"name": name} for name in _clean_option_names(recipe.meal)]
-            },
+            "Meal": {"multi_select": [{"name": name} for name in meals]},
             "Difficulty": {"select": {"name": recipe.difficulty}},
             "Time (min)": {"number": recipe.time_min},
             "Servings": {"number": recipe.servings},
             "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
         }
-        cuisine = _clean_option_name(recipe.cuisine)
+        cuisine = _snap_option(recipe.cuisine, vocab.cuisines)
         if cuisine:
             properties["Cuisine"] = {"select": {"name": cuisine}}
-        target = canonical_url(recipe.source_url)
-        if target:
-            properties["Source URL"] = {"url": target}
+        if recipe.source_url:
+            properties["Source URL"] = {"url": recipe.source_url}
 
         blocks = _body_blocks(recipe)
         create_args = {
@@ -201,10 +204,8 @@ class NotionStore:
 
         page = self.client.pages.create(**create_args)
         try:
-            for start in range(CHILDREN_LIMIT, len(blocks), CHILDREN_LIMIT):
-                self.client.blocks.children.append(
-                    block_id=page["id"], children=blocks[start : start + CHILDREN_LIMIT]
-                )
+            for batch in batched(blocks[CHILDREN_LIMIT:], CHILDREN_LIMIT):
+                self.client.blocks.children.append(block_id=page["id"], children=list(batch))
         except Exception:
             log.exception("failed to append remaining blocks to %s", page["url"])
         return page["url"]
@@ -238,5 +239,5 @@ class NotionStore:
                 )
             page_ids.append(created[key])
 
-        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)))
+        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)), vocab)
         return url, True

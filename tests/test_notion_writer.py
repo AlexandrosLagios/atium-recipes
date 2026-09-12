@@ -1,5 +1,12 @@
 from recipebot.models import Ingredient, Recipe
-from recipebot.notion import NotionStore
+from recipebot.notion import NotionStore, Vocabulary
+
+VOCAB = Vocabulary(
+    ingredients={},
+    cuisines=["Chinese"],
+    meals=["Side", "Lunch", "Dinner"],
+    categories=[],
+)
 
 
 class FakePages:
@@ -53,7 +60,7 @@ def test_create_recipe_writes_the_canonical_url_and_the_cover():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    url = store.create_recipe(a_recipe(), ["p2"])
+    url = store.create_recipe(a_recipe(), ["p2"], VOCAB)
 
     assert url == "https://notion.so/r1"
     call = client.pages.created[0]
@@ -76,7 +83,7 @@ def test_create_recipe_omits_the_url_and_the_cover_when_absent():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(source="Photo", source_url="", image_url=""), [])
+    store.create_recipe(a_recipe(source="Photo", source_url="", image_url=""), [], VOCAB)
 
     call = client.pages.created[0]
     assert "Source URL" not in call["properties"]
@@ -87,7 +94,7 @@ def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(), ["p2"])
+    store.create_recipe(a_recipe(), ["p2"], VOCAB)
 
     blocks = client.pages.created[0]["children"]
     headings = [
@@ -112,7 +119,7 @@ def test_more_than_a_hundred_blocks_are_appended_in_chunks():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [])
+    store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [], VOCAB)
 
     assert len(client.pages.created[0]["children"]) == 100
     assert client.blocks.children.appended[0]["block_id"] == "r1"
@@ -123,7 +130,7 @@ def test_a_comma_in_the_cuisine_is_cleaned_to_the_text_before_it():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(cuisine="Chinese, Asian"), [])
+    store.create_recipe(a_recipe(cuisine="Chinese, Asian"), [], VOCAB)
 
     props = client.pages.created[0]["properties"]
     assert props["Cuisine"]["select"]["name"] == "Chinese"
@@ -133,7 +140,7 @@ def test_a_comma_in_a_meal_is_cleaned_to_the_text_before_it():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(meal=["Lunch, Dinner"]), [])
+    store.create_recipe(a_recipe(meal=["Lunch, Dinner"]), [], VOCAB)
 
     props = client.pages.created[0]["properties"]
     assert props["Meal"]["multi_select"] == [{"name": "Lunch"}]
@@ -143,7 +150,7 @@ def test_a_blank_cuisine_omits_the_property_instead_of_writing_an_empty_option()
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(cuisine=""), [])
+    store.create_recipe(a_recipe(cuisine=""), [], VOCAB)
 
     assert "Cuisine" not in client.pages.created[0]["properties"]
 
@@ -152,7 +159,7 @@ def test_duplicate_cleaned_meal_names_are_deduplicated():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(meal=["Lunch, Dinner", "Lunch"]), [])
+    store.create_recipe(a_recipe(meal=["Lunch, Dinner", "Lunch"]), [], VOCAB)
 
     props = client.pages.created[0]["properties"]
     assert props["Meal"]["multi_select"] == [{"name": "Lunch"}]
@@ -162,10 +169,42 @@ def test_a_blank_meal_entry_is_dropped_rather_than_written_empty():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(meal=["", "Dinner"]), [])
+    store.create_recipe(a_recipe(meal=["", "Dinner"]), [], VOCAB)
 
     props = client.pages.created[0]["properties"]
     assert props["Meal"]["multi_select"] == [{"name": "Dinner"}]
+
+
+def test_a_drifted_cuisine_snaps_to_the_known_spelling():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    vocab = Vocabulary(ingredients={}, cuisines=["Greek"], meals=[], categories=[])
+
+    store.create_recipe(a_recipe(cuisine="greek "), [], vocab)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Greek"
+
+
+def test_a_drifted_meal_snaps_to_the_known_spelling():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    vocab = Vocabulary(ingredients={}, cuisines=[], meals=["Dinner"], categories=[])
+
+    store.create_recipe(a_recipe(meal=["Dinners"]), [], vocab)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == [{"name": "Dinner"}]
+
+
+def test_an_unmatched_cuisine_with_no_close_option_is_omitted():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    vocab = Vocabulary(ingredients={}, cuisines=["Greek"], meals=[], categories=[])
+
+    store.create_recipe(a_recipe(cuisine="Klingon"), [], vocab)
+
+    assert "Cuisine" not in client.pages.created[0]["properties"]
 
 
 class RaisingChildren:
@@ -183,6 +222,6 @@ def test_an_append_failure_on_a_long_body_still_returns_the_page_url():
     client.blocks = RaisingBlocks()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    url = store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [])
+    url = store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [], VOCAB)
 
     assert url == "https://notion.so/r1"
