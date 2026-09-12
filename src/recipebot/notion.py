@@ -2,6 +2,7 @@ from notion_client import Client
 from pydantic import BaseModel
 
 from .config import Config
+from .models import canonical_url
 
 
 class Vocabulary(BaseModel):
@@ -58,3 +59,13 @@ class NotionStore:
             meals=_options(recipes_schema, "Meal"),
             categories=_options(ingredients_schema, "Category"),
         )
+
+    def find_by_url(self, url: str) -> str | None:
+        target = canonical_url(url)
+        if not target:
+            return None
+        pages = self._all_pages(
+            self.recipes_ds,
+            filter={"property": "Source URL", "url": {"equals": target}},
+        )
+        return pages[0]["url"] if pages else None
