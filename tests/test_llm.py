@@ -76,6 +76,20 @@ def test_an_api_error_on_haiku_escalates_to_sonnet():
     assert client.messages.models == [HAIKU, SONNET]
 
 
+def test_a_429_on_haiku_raises_and_never_calls_sonnet():
+    error = anthropic.APIStatusError(
+        "rate limited",
+        response=type("Resp", (), {"status_code": 429, "headers": {}, "request": None})(),
+        body=None,
+    )
+    client = FakeClient([error, FULL])
+
+    with pytest.raises(anthropic.APIStatusError):
+        Extractor(client).extract([text_block("body")], VOCAB)
+
+    assert client.messages.models == [HAIKU]
+
+
 def test_two_empty_parses_return_none():
     client = FakeClient([EMPTY, EMPTY])
 

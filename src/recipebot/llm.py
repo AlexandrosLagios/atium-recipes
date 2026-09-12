@@ -72,8 +72,8 @@ class Extractor:
                     messages=[{"role": "user", "content": blocks}],
                     output_format=ExtractedRecipe,
                 )
-            except anthropic.APIStatusError:
-                if last:
+            except anthropic.APIStatusError as exc:
+                if last or exc.status_code == 429:
                     raise
                 continue
             parsed = response.parsed_output
