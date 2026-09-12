@@ -1,8 +1,10 @@
+from difflib import get_close_matches
+
 from notion_client import Client
 from pydantic import BaseModel
 
 from .config import Config
-from .models import canonical_url
+from .models import Ingredient, canonical_url
 
 
 class Vocabulary(BaseModel):
@@ -10,6 +12,45 @@ class Vocabulary(BaseModel):
     cuisines: list[str] = []
     meals: list[str] = []
     categories: list[str] = []
+
+
+class IngredientPlan(BaseModel):
+    existing: dict[str, str] = {}
+    new: list[str] = []
+    near: dict[str, str] = {}
+
+
+# ponytail: difflib is the whole "resembles an existing one" heuristic. It catches
+# plurals and casing, not synonyms ("aubergine" against "eggplant"). Swap in an
+# embedding lookup only if the user reports real duplicates slipping through.
+def reconcile_ingredients(vocab: Vocabulary, ingredients: list[Ingredient]) -> IngredientPlan:
+    lowered = {name.lower(): page_id for name, page_id in vocab.ingredients.items()}
+    by_lower = {name.lower(): name for name in vocab.ingredients}
+    plan = IngredientPlan()
+    for item in ingredients:
+        key = item.name.strip().lower()
+        if not key:
+            continue
+        if key in lowered:
+            plan.existing[item.name] = lowered[key]
+            continue
+        close = get_close_matches(key, list(lowered), n=1, cutoff=0.85)
+        if close:
+            plan.near[item.name] = by_lower[close[0]]
+        else:
+            plan.new.append(item.name)
+    return plan
+
+
+def _snap_category(category: str, categories: list[str]) -> str:
+    candidate = category.strip()
+    for known in categories:
+        if candidate.lower() == known.lower():
+            return known
+    close = get_close_matches(candidate.lower(), [c.lower() for c in categories], n=1, cutoff=0.7)
+    if close:
+        return next(c for c in categories if c.lower() == close[0])
+    return "Staples"
 
 
 def _title_of(page: dict) -> str:
@@ -69,3 +110,15 @@ class NotionStore:
             filter={"property": "Source URL", "url": {"equals": target}},
         )
         return pages[0]["url"] if pages else None
+
+    def create_ingredient(self, name: str, category: str, categories: list[str]) -> str:
+        chosen = _snap_category(category, categories)
+        page = self.client.pages.create(
+            parent={"type": "data_source_id", "data_source_id": self.ingredients_ds},
+            properties={
+                "Name": {"title": [{"type": "text", "text": {"content": name[:2000]}}]},
+                "Category": {"select": {"name": chosen}},
+                "In pantry": {"checkbox": False},
+            },
+        )
+        return page["id"]
