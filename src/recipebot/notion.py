@@ -189,3 +189,30 @@ class NotionStore:
                 block_id=page["id"], children=blocks[start : start + CHILDREN_LIMIT]
             )
         return page["url"]
+
+    def save_recipe(
+        self, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str] | None = None
+    ) -> str:
+        merges = merges or {}
+        plan = reconcile_ingredients(vocab, recipe.ingredients)
+        categories = {item.name: item.category for item in recipe.ingredients}
+        page_ids = list(plan.existing.values())
+
+        undecided = list(plan.new)
+        for proposed in plan.near:
+            target = merges.get(proposed)
+            if target and target in vocab.ingredients:
+                page_ids.append(vocab.ingredients[target])
+            else:
+                undecided.append(proposed)
+
+        created: dict[str, str] = {}
+        for name in undecided:
+            key = name.strip().lower()
+            if key not in created:
+                created[key] = self.create_ingredient(
+                    name, categories.get(name, ""), vocab.categories
+                )
+            page_ids.append(created[key])
+
+        return self.create_recipe(recipe, list(dict.fromkeys(page_ids)))
