@@ -53,6 +53,7 @@ def make_update(text=None, photo=None):
     update.message.caption = None
     update.message.photo = photo or []
     update.message.reply_text = AsyncMock()
+    update.effective_message = update.message
     return update
 
 
@@ -176,6 +177,32 @@ async def test_a_photo_with_no_recipe_says_so(monkeypatch):
     assert "recipe" in update.message.reply_text.call_args[0][0].lower()
 
 
+async def test_on_error_replies_to_the_allowed_user():
+    update = make_update(text="hi")
+    context = make_context(FakeStore(), object())
+    context.bot_data["allowed_user_id"] = 1
+    context.error = RuntimeError("boom")
+
+    await bot.on_error(update, context)
+
+    update.message.reply_text.assert_awaited_once_with(bot.ERROR_MESSAGE)
+
+
+async def test_on_error_stays_silent_for_a_foreign_user():
+    update = make_update(text="hi")
+    update.effective_user = type("User", (), {"id": 999})()
+    context = make_context(FakeStore(), object())
+    context.bot_data["allowed_user_id"] = 1
+    context.error = RuntimeError("boom")
+
+    await bot.on_error(update, context)
+
+    update.message.reply_text.assert_not_awaited()
+
+
+PHOTO_HANDLER_FILTER = filters.UpdateType.MESSAGE & filters.PHOTO
+TEXT_HANDLER_FILTER = filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND
+
 CHAT = Chat(id=1, type="private")
 NOW = dt.datetime.now(dt.timezone.utc)
 
@@ -185,13 +212,30 @@ def test_a_photo_with_a_caption_matches_the_photo_filter_not_the_text_filter():
     message = Message(message_id=1, date=NOW, chat=CHAT, photo=photo, caption="yum")
     update = Update(update_id=1, message=message)
 
-    assert filters.PHOTO.check_update(update)
-    assert not (filters.TEXT & ~filters.COMMAND).check_update(update)
+    assert PHOTO_HANDLER_FILTER.check_update(update)
+    assert not TEXT_HANDLER_FILTER.check_update(update)
 
 
 def test_a_plain_text_message_matches_the_text_filter_not_the_photo_filter():
     message = Message(message_id=1, date=NOW, chat=CHAT, text="hello")
     update = Update(update_id=1, message=message)
 
-    assert not filters.PHOTO.check_update(update)
-    assert (filters.TEXT & ~filters.COMMAND).check_update(update)
+    assert not PHOTO_HANDLER_FILTER.check_update(update)
+    assert TEXT_HANDLER_FILTER.check_update(update)
+
+
+def test_an_edited_photo_message_matches_neither_handler_filter():
+    photo = (PhotoSize(file_id="x", file_unique_id="x", width=10, height=10),)
+    message = Message(message_id=1, date=NOW, chat=CHAT, photo=photo, caption="yum")
+    update = Update(update_id=1, edited_message=message)
+
+    assert not PHOTO_HANDLER_FILTER.check_update(update)
+    assert not TEXT_HANDLER_FILTER.check_update(update)
+
+
+def test_an_edited_text_message_matches_neither_handler_filter():
+    message = Message(message_id=1, date=NOW, chat=CHAT, text="hello")
+    update = Update(update_id=1, edited_message=message)
+
+    assert not PHOTO_HANDLER_FILTER.check_update(update)
+    assert not TEXT_HANDLER_FILTER.check_update(update)
