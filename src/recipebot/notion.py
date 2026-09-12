@@ -48,7 +48,7 @@ def reconcile_ingredients(vocab: Vocabulary, ingredients: list[Ingredient]) -> I
     return plan
 
 
-def _snap_option(value: str, known: list[str], default: str = "") -> str:
+def _snap_option(value: str, known: list[str], default: str | None = None) -> str:
     candidate = value.split(",")[0].strip()
     if not candidate:
         return ""
@@ -58,7 +58,7 @@ def _snap_option(value: str, known: list[str], default: str = "") -> str:
     close = get_close_matches(candidate.lower(), list(lookup), n=1, cutoff=0.7)
     if close:
         return lookup[close[0]]
-    return default
+    return default if default is not None else candidate
 
 
 def _title_of(page: dict) -> str:
@@ -174,7 +174,7 @@ class NotionStore:
         meals = list(
             dict.fromkeys(
                 name
-                for name in (_snap_option(entry, vocab.meals) for entry in recipe.meal)
+                for name in (_snap_option(entry, vocab.meals, "") for entry in recipe.meal)
                 if name
             )
         )

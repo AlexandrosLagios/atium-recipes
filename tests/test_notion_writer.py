@@ -197,14 +197,37 @@ def test_a_drifted_meal_snaps_to_the_known_spelling():
     assert props["Meal"]["multi_select"] == [{"name": "Dinner"}]
 
 
-def test_an_unmatched_cuisine_with_no_close_option_is_omitted():
+def test_a_genuinely_new_cuisine_with_no_close_option_is_kept_as_written():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
-    vocab = Vocabulary(ingredients={}, cuisines=["Greek"], meals=[], categories=[])
+    vocab = Vocabulary(ingredients={}, cuisines=["Chinese", "Greek"], meals=[], categories=[])
 
-    store.create_recipe(a_recipe(cuisine="Klingon"), [], vocab)
+    store.create_recipe(a_recipe(cuisine="Ethiopian"), [], vocab)
 
-    assert "Cuisine" not in client.pages.created[0]["properties"]
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Ethiopian"
+
+
+def test_a_genuinely_new_cuisine_with_a_comma_is_kept_up_to_the_comma():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    vocab = Vocabulary(ingredients={}, cuisines=["Chinese", "Greek"], meals=[], categories=[])
+
+    store.create_recipe(a_recipe(cuisine="Sichuan, Chinese"), [], vocab)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Sichuan"
+
+
+def test_an_unknown_meal_entry_is_dropped_since_meal_is_a_fixed_vocabulary():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    vocab = Vocabulary(ingredients={}, cuisines=[], meals=["Dinner"], categories=[])
+
+    store.create_recipe(a_recipe(meal=["Brunch"]), [], vocab)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == []
 
 
 class RaisingChildren:
