@@ -81,6 +81,42 @@ def test_the_model_estimate_survives_when_the_scraper_found_no_time_or_servings(
     assert recipe.servings == 1
 
 
+def test_time_min_takes_the_models_resting_aware_figure_over_a_smaller_scraped_one(monkeypatch):
+    scraped = ScrapeResult(
+        name="Overnight pickled vegetables",
+        time_min=30,
+        servings=4,
+        ingredients=["2 medium cucumbers"],
+        method=["Salt.", "Rest."],
+    )
+    model_said = MODEL_SAID.model_copy(update={"time_min": 745})
+    monkeypatch.setattr(extract, "fetch_html", lambda url: "<html></html>")
+    monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
+    stub = StubExtractor(result=model_said)
+
+    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB)
+
+    assert recipe.time_min == 745
+
+
+def test_time_min_keeps_the_larger_scraped_figure_over_a_smaller_model_one(monkeypatch):
+    scraped = ScrapeResult(
+        name="Overnight pickled vegetables",
+        time_min=745,
+        servings=4,
+        ingredients=["2 medium cucumbers"],
+        method=["Salt.", "Rest."],
+    )
+    model_said = MODEL_SAID.model_copy(update={"time_min": 30})
+    monkeypatch.setattr(extract, "fetch_html", lambda url: "<html></html>")
+    monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
+    stub = StubExtractor(result=model_said)
+
+    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB)
+
+    assert recipe.time_min == 745
+
+
 def test_a_page_without_structured_data_is_low_confidence(monkeypatch):
     monkeypatch.setattr(extract, "fetch_html", lambda url: "<html></html>")
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: None)

@@ -62,7 +62,9 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
     )
     # The scraper read these from structured data, so they beat the model.
     recipe.name = scraped.name or recipe.name
-    recipe.time_min = scraped.time_min or recipe.time_min
+    # schema.org totalTime conventionally excludes an unattended rest, so take
+    # whichever of the two is larger rather than letting the scraper always win.
+    recipe.time_min = max(scraped.time_min, recipe.time_min)
     recipe.servings = scraped.servings or recipe.servings
     recipe.method = scraped.method or recipe.method
     return recipe
