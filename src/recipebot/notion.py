@@ -61,6 +61,11 @@ def _clean_option_name(name: str) -> str:
     return name.split(",")[0].strip()
 
 
+def _clean_option_names(names: list[str]) -> list[str]:
+    cleaned = (_clean_option_name(name) for name in names)
+    return list(dict.fromkeys(name for name in cleaned if name))
+
+
 def _title_of(page: dict) -> str:
     spans = page["properties"]["Name"]["title"]
     return "".join(span["plain_text"] for span in spans).strip()
@@ -171,11 +176,7 @@ class NotionStore:
             "Name": {"title": _rt(recipe.name)},
             "Source": {"select": {"name": recipe.source}},
             "Meal": {
-                "multi_select": [
-                    {"name": cleaned}
-                    for meal in recipe.meal
-                    if (cleaned := _clean_option_name(meal))
-                ]
+                "multi_select": [{"name": name} for name in _clean_option_names(recipe.meal)]
             },
             "Difficulty": {"select": {"name": recipe.difficulty}},
             "Time (min)": {"number": recipe.time_min},

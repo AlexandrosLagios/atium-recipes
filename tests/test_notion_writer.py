@@ -148,6 +148,16 @@ def test_a_blank_cuisine_omits_the_property_instead_of_writing_an_empty_option()
     assert "Cuisine" not in client.pages.created[0]["properties"]
 
 
+def test_duplicate_cleaned_meal_names_are_deduplicated():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(meal=["Lunch, Dinner", "Lunch"]), [])
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == [{"name": "Lunch"}]
+
+
 def test_a_blank_meal_entry_is_dropped_rather_than_written_empty():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
