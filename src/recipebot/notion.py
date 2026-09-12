@@ -69,7 +69,7 @@ def _options(schema: dict, prop: str) -> list[str]:
 RICH_TEXT_LIMIT = 2000
 CHILDREN_LIMIT = 100
 # ponytail: a Notion toggle's own children are not chunked, so the source text is
-# capped at 90 paragraphs (~171k characters). Chunk the toggle too if a real
+# capped at 90 paragraphs (180k characters). Chunk the toggle too if a real
 # transcript ever hits the cap.
 SOURCE_TEXT_BLOCK_LIMIT = 90
 
