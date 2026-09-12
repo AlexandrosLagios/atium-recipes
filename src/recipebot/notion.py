@@ -48,17 +48,40 @@ def reconcile_ingredients(vocab: Vocabulary, ingredients: list[Ingredient]) -> I
     return plan
 
 
-def _snap_option(value: str, known: list[str], default: str | None = None) -> str:
-    candidate = value.split(",")[0].strip()
-    if not candidate:
-        return ""
-    lookup = {name.lower(): name for name in known}
-    if candidate.lower() in lookup:
-        return lookup[candidate.lower()]
-    close = get_close_matches(candidate.lower(), list(lookup), n=1, cutoff=0.7)
+def _snap_category(category: str, categories: list[str]) -> str:
+    candidate = category.strip()
+    for known in categories:
+        if candidate.lower() == known.lower():
+            return known
+    close = get_close_matches(candidate.lower(), [c.lower() for c in categories], n=1, cutoff=0.7)
     if close:
-        return lookup[close[0]]
-    return default if default is not None else candidate
+        return next(c for c in categories if c.lower() == close[0])
+    return "Staples"
+
+
+# Notion rejects a select option name that contains a comma, and the model
+# regularly answers "Sichuan, Chinese", so keep only the text before the comma.
+def _clean_option_name(name: str) -> str:
+    return name.split(",")[0].strip()
+
+
+def _known_spelling(value: str, known: list[str]) -> str | None:
+    return {name.lower(): name for name in known}.get(value.lower())
+
+
+# Cuisine is an open vocabulary, so a value that matches nothing is a new
+# cuisine rather than a misspelling of an old one. Fold case against the known
+# options, never guess: "Indonesian" is not a drifted "Indian".
+def _cuisine_option(value: str, known: list[str]) -> str:
+    cleaned = _clean_option_name(value)
+    return _known_spelling(cleaned, known) or cleaned
+
+
+# Meal is the fixed vocabulary in the spec, so an entry that matches no known
+# option is dropped rather than snapped onto its nearest neighbour.
+def _meal_options(names: list[str], known: list[str]) -> list[str]:
+    matched = (_known_spelling(_clean_option_name(name), known) for name in names)
+    return list(dict.fromkeys(name for name in matched if name))
 
 
 def _title_of(page: dict) -> str:
@@ -157,7 +180,7 @@ class NotionStore:
         return pages[0]["url"] if pages else None
 
     def create_ingredient(self, name: str, category: str, categories: list[str]) -> str:
-        chosen = _snap_option(category, categories, "Staples")
+        chosen = _snap_category(category, categories)
         page = self.client.pages.create(
             parent={"type": "data_source_id", "data_source_id": self.ingredients_ds},
             properties={
@@ -171,13 +194,7 @@ class NotionStore:
     def create_recipe(
         self, recipe: Recipe, ingredient_page_ids: list[str], vocab: Vocabulary
     ) -> str:
-        meals = list(
-            dict.fromkeys(
-                name
-                for name in (_snap_option(entry, vocab.meals, "") for entry in recipe.meal)
-                if name
-            )
-        )
+        meals = _meal_options(recipe.meal, vocab.meals)
         properties = {
             "Name": {"title": _rt(recipe.name)},
             "Source": {"select": {"name": recipe.source}},
@@ -187,7 +204,7 @@ class NotionStore:
             "Servings": {"number": recipe.servings},
             "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
         }
-        cuisine = _snap_option(recipe.cuisine, vocab.cuisines)
+        cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
         if cuisine:
             properties["Cuisine"] = {"select": {"name": cuisine}}
         if recipe.source_url:

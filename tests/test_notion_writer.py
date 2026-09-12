@@ -8,6 +8,25 @@ VOCAB = Vocabulary(
     categories=[],
 )
 
+SPEC_MEALS = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Side"]
+SPEC_CATEGORIES = [
+    "Vegetables and aromatics",
+    "Sauces and condiments",
+    "Spices and seasonings",
+    "Staples",
+    "Protein",
+    "Dairy and eggs",
+]
+# Cuisine is a bare select in the spec, so its options are whatever has been
+# written before. This is the accumulated list that made fuzzy matching corrupt
+# a new cuisine into an old neighbour.
+SPEC_VOCAB = Vocabulary(
+    ingredients={},
+    cuisines=["Indian", "Peruvian", "American", "Japanese", "German", "Spanish", "Greek"],
+    meals=SPEC_MEALS,
+    categories=SPEC_CATEGORIES,
+)
+
 
 class FakePages:
     def __init__(self):
@@ -191,7 +210,7 @@ def test_a_drifted_meal_snaps_to_the_known_spelling():
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
     vocab = Vocabulary(ingredients={}, cuisines=[], meals=["Dinner"], categories=[])
 
-    store.create_recipe(a_recipe(meal=["Dinners"]), [], vocab)
+    store.create_recipe(a_recipe(meal=["dinner "]), [], vocab)
 
     props = client.pages.created[0]["properties"]
     assert props["Meal"]["multi_select"] == [{"name": "Dinner"}]
@@ -228,6 +247,58 @@ def test_an_unknown_meal_entry_is_dropped_since_meal_is_a_fixed_vocabulary():
 
     props = client.pages.created[0]["properties"]
     assert props["Meal"]["multi_select"] == []
+
+
+def test_brunch_is_dropped_rather_than_filed_as_lunch():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(meal=["Brunch"]), [], SPEC_VOCAB)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == []
+
+
+def test_an_unknown_cuisine_is_written_as_given_not_snapped_to_a_neighbour():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(cuisine="Indonesian"), [], SPEC_VOCAB)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Indonesian"
+
+
+def test_no_accumulated_cuisine_is_snapped_onto_a_close_existing_neighbour():
+    for written, wrong in [
+        ("Persian", "Peruvian"),
+        ("Jamaican", "American"),
+        ("Javanese", "Japanese"),
+        ("Georgian", "German"),
+        ("Danish", "Spanish"),
+    ]:
+        client = FakeClient()
+        store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+        store.create_recipe(a_recipe(cuisine=written), [], SPEC_VOCAB)
+
+        name = client.pages.created[0]["properties"]["Cuisine"]["select"]["name"]
+        assert name == written, f"{written} was written as {wrong}"
+
+
+def test_every_written_meal_and_cuisine_name_is_free_of_commas():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(
+        a_recipe(cuisine="Sichuan, Chinese", meal=["Lunch, Dinner", "Side"]),
+        [],
+        SPEC_VOCAB,
+    )
+
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Sichuan"
+    assert props["Meal"]["multi_select"] == [{"name": "Lunch"}, {"name": "Side"}]
 
 
 class RaisingChildren:

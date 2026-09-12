@@ -4,8 +4,15 @@ from recipebot.notion import NotionStore, Vocabulary, reconcile_ingredients
 VOCAB = Vocabulary(
     ingredients={"Chicken": "p1", "Cucumber": "p2", "Soy sauce": "p3"},
     cuisines=["Chinese"],
-    meals=["Side"],
-    categories=["Staples", "Vegetables and aromatics", "Sauces and condiments"],
+    meals=["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Side"],
+    categories=[
+        "Vegetables and aromatics",
+        "Sauces and condiments",
+        "Spices and seasonings",
+        "Staples",
+        "Protein",
+        "Dairy and eggs",
+    ],
 )
 
 
@@ -55,8 +62,28 @@ def test_create_ingredient_leaves_in_pantry_unticked_and_snaps_the_category():
     assert page_id == "new-page"
     props = client.pages.created[0]["properties"]
     assert props["In pantry"]["checkbox"] is False
-    assert props["Category"]["select"]["name"] == "Staples"
+    assert props["Category"]["select"]["name"] == "Dairy and eggs"
     assert client.pages.created[0]["parent"] == {
         "type": "data_source_id",
         "data_source_id": "ds-ingredients",
     }
+
+
+def test_an_uncategorised_ingredient_falls_back_to_staples():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_ingredient("Anthotyro", Ingredient(name="Anthotyro").category, VOCAB.categories)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Category"]["select"]["name"] == "Staples"
+
+
+def test_an_unrecognisable_category_falls_back_to_staples():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_ingredient("Anthotyro", "Fermented things", VOCAB.categories)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Category"]["select"]["name"] == "Staples"
