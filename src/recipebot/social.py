@@ -51,10 +51,10 @@ def fetch_social(url: str, workdir: Path, *, max_frames: int = 4) -> SocialResul
     except yt_dlp.utils.DownloadError as exc:
         raise SocialBlocked(str(exc)) from exc
 
-    caption = (info.get("description") or info.get("title") or "").strip()
+    caption = (info.get("description") or "").strip() or (info.get("title") or "").strip()
     result = SocialResult(caption=caption, thumbnail_url=info.get("thumbnail") or "")
 
-    videos = [p for p in workdir.iterdir() if p.suffix.lower() in VIDEO_SUFFIXES]
+    videos = sorted(p for p in workdir.iterdir() if p.suffix.lower() in VIDEO_SUFFIXES)
     if videos:
         try:
             result.frames = keyframes(videos[0], workdir, max_frames)
