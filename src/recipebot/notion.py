@@ -1,3 +1,4 @@
+import logging
 from difflib import get_close_matches
 
 from notion_client import Client
@@ -5,6 +6,8 @@ from pydantic import BaseModel
 
 from .config import Config
 from .models import Ingredient, Recipe, canonical_url
+
+log = logging.getLogger(__name__)
 
 
 class Vocabulary(BaseModel):
@@ -52,6 +55,10 @@ def _snap_category(category: str, categories: list[str]) -> str:
     if close:
         return next(c for c in categories if c.lower() == close[0])
     return "Staples"
+
+
+def _clean_option_name(name: str) -> str:
+    return name.split(",")[0].strip()
 
 
 def _title_of(page: dict) -> str:
@@ -118,9 +125,9 @@ class NotionStore:
                 kwargs["start_cursor"] = cursor
             page = self.client.data_sources.query(data_source_id=data_source_id, **kwargs)
             pages.extend(page["results"])
-            if not page.get("has_more"):
+            cursor = page.get("next_cursor")
+            if not page.get("has_more") or not cursor:
                 return pages
-            cursor = page["next_cursor"]
 
     def vocabulary(self) -> Vocabulary:
         ingredients = {
@@ -163,13 +170,21 @@ class NotionStore:
         properties = {
             "Name": {"title": _rt(recipe.name)},
             "Source": {"select": {"name": recipe.source}},
-            "Cuisine": {"select": {"name": recipe.cuisine.split(",")[0].strip()}},
-            "Meal": {"multi_select": [{"name": meal} for meal in recipe.meal]},
+            "Meal": {
+                "multi_select": [
+                    {"name": cleaned}
+                    for meal in recipe.meal
+                    if (cleaned := _clean_option_name(meal))
+                ]
+            },
             "Difficulty": {"select": {"name": recipe.difficulty}},
             "Time (min)": {"number": recipe.time_min},
             "Servings": {"number": recipe.servings},
             "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
         }
+        cuisine = _clean_option_name(recipe.cuisine)
+        if cuisine:
+            properties["Cuisine"] = {"select": {"name": cuisine}}
         target = canonical_url(recipe.source_url)
         if target:
             properties["Source URL"] = {"url": target}
@@ -184,10 +199,13 @@ class NotionStore:
             create_args["cover"] = {"type": "external", "external": {"url": recipe.image_url}}
 
         page = self.client.pages.create(**create_args)
-        for start in range(CHILDREN_LIMIT, len(blocks), CHILDREN_LIMIT):
-            self.client.blocks.children.append(
-                block_id=page["id"], children=blocks[start : start + CHILDREN_LIMIT]
-            )
+        try:
+            for start in range(CHILDREN_LIMIT, len(blocks), CHILDREN_LIMIT):
+                self.client.blocks.children.append(
+                    block_id=page["id"], children=blocks[start : start + CHILDREN_LIMIT]
+                )
+        except Exception:
+            log.exception("failed to append remaining blocks to %s", page["url"])
         return page["url"]
 
     def save_recipe(

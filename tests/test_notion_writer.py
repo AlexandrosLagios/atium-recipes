@@ -117,3 +117,62 @@ def test_more_than_a_hundred_blocks_are_appended_in_chunks():
     assert len(client.pages.created[0]["children"]) == 100
     assert client.blocks.children.appended[0]["block_id"] == "r1"
     assert len(client.blocks.children.appended[0]["children"]) <= 100
+
+
+def test_a_comma_in_the_cuisine_is_cleaned_to_the_text_before_it():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(cuisine="Chinese, Asian"), [])
+
+    props = client.pages.created[0]["properties"]
+    assert props["Cuisine"]["select"]["name"] == "Chinese"
+
+
+def test_a_comma_in_a_meal_is_cleaned_to_the_text_before_it():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(meal=["Lunch, Dinner"]), [])
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == [{"name": "Lunch"}]
+
+
+def test_a_blank_cuisine_omits_the_property_instead_of_writing_an_empty_option():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(cuisine=""), [])
+
+    assert "Cuisine" not in client.pages.created[0]["properties"]
+
+
+def test_a_blank_meal_entry_is_dropped_rather_than_written_empty():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(meal=["", "Dinner"]), [])
+
+    props = client.pages.created[0]["properties"]
+    assert props["Meal"]["multi_select"] == [{"name": "Dinner"}]
+
+
+class RaisingChildren:
+    def append(self, **kwargs):
+        raise RuntimeError("Notion append failed")
+
+
+class RaisingBlocks:
+    def __init__(self):
+        self.children = RaisingChildren()
+
+
+def test_an_append_failure_on_a_long_body_still_returns_the_page_url():
+    client = FakeClient()
+    client.blocks = RaisingBlocks()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    url = store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [])
+
+    assert url == "https://notion.so/r1"

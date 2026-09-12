@@ -57,3 +57,32 @@ def test_vocabulary_pages_through_every_ingredient():
     assert vocab.cuisines == ["Chinese"]
     assert vocab.meals == ["Side", "Dinner"]
     assert vocab.categories == ["Staples"]
+
+
+class MalformedDataSources:
+    def __init__(self):
+        self.queries = []
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        if len(self.queries) > 1:
+            raise AssertionError("looped: a falsy cursor must stop pagination")
+        return {
+            "results": [{"id": "p1", "properties": {"Name": {"title": [{"plain_text": "Chicken"}]}}}],
+            "has_more": True,
+        }
+
+
+class MalformedClient:
+    def __init__(self):
+        self.data_sources = MalformedDataSources()
+
+
+def test_all_pages_stops_when_has_more_is_true_but_the_cursor_is_falsy():
+    client = MalformedClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    pages = store._all_pages("ds-ingredients")
+
+    assert len(client.data_sources.queries) == 1
+    assert pages == [{"id": "p1", "properties": {"Name": {"title": [{"plain_text": "Chicken"}]}}}]
