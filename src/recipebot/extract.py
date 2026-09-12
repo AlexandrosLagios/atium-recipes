@@ -1,0 +1,118 @@
+import tempfile
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from .llm import image_block, text_block
+from .models import Recipe, canonical_url
+from .notion import Vocabulary
+from .scrape import fetch_html, readable_text, scrape_jsonld
+from .social import fetch_social
+
+HOSTS = {
+    "instagram.com": "Instagram",
+    "tiktok.com": "TikTok",
+    "youtube.com": "YouTube",
+    "youtu.be": "YouTube",
+}
+
+PHOTO_PROMPT = (
+    "This image or these images show a recipe. Read every legible word, including "
+    "handwriting and on-screen captions, and extract the recipe."
+)
+SOCIAL_PROMPT = (
+    "This is a social media post. The caption follows, and the images are frames "
+    "from the video. Extract the recipe from both."
+)
+
+
+def source_for(url: str) -> str:
+    host = urlsplit(url).netloc.lower()
+    for suffix, name in HOSTS.items():
+        if host == suffix or host.endswith("." + suffix):
+            return name
+    return "Web"
+
+
+def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
+    source = source_for(url)
+    if source in {"Instagram", "TikTok", "YouTube"}:
+        return _from_social(url, source, extractor, vocab)
+
+    html = fetch_html(url)
+    scraped = scrape_jsonld(html, url)
+    if scraped is None:
+        body = readable_text(html, url)
+        extracted = extractor.extract([text_block(body)], vocab)
+        if extracted is None:
+            return None
+        return Recipe.from_extracted(
+            extracted, source="Web", source_url=canonical_url(url), source_text=body
+        )
+
+    extracted = extractor.extract([text_block(scraped.as_prompt())], vocab)
+    if extracted is None:
+        return None
+    recipe = Recipe.from_extracted(
+        extracted,
+        source="Web",
+        source_url=canonical_url(url),
+        image_url=scraped.image_url,
+        source_text=scraped.as_prompt(),
+        high_confidence=True,
+    )
+    # Unconditional, not `or`: ScrapeResult's fields are always present once
+    # scrape_jsonld succeeds, even when falsy (0 minutes, no servings), and
+    # `or` would let the model's guess override a genuine scraped zero.
+    recipe.name = scraped.name
+    recipe.time_min = scraped.time_min
+    recipe.servings = scraped.servings
+    recipe.method = scraped.method
+    return recipe
+
+
+def _from_social(url: str, source: str, extractor, vocab: Vocabulary) -> Recipe | None:
+    with tempfile.TemporaryDirectory() as tmp:
+        result = fetch_social(url, Path(tmp))
+        images = [(frame, "image/jpeg") for frame in result.frames]
+        return from_photo(
+            images,
+            extractor,
+            vocab,
+            source=source,
+            source_url=url,
+            caption=result.caption,
+            image_url=result.thumbnail_url,
+            prompt=SOCIAL_PROMPT,
+        )
+
+
+def from_photo(
+    images: list[tuple[bytes, str]],
+    extractor,
+    vocab: Vocabulary,
+    *,
+    source: str = "Photo",
+    source_url: str = "",
+    caption: str = "",
+    image_url: str = "",
+    prompt: str = PHOTO_PROMPT,
+) -> Recipe | None:
+    blocks = [image_block(data, media_type) for data, media_type in images]
+    blocks.append(text_block(f"{prompt}\n\n{caption}".strip()))
+    extracted = extractor.extract(blocks, vocab)
+    if extracted is None:
+        return None
+    return Recipe.from_extracted(
+        extracted,
+        source=source,
+        source_url=canonical_url(source_url),
+        image_url=image_url,
+        source_text=caption,
+    )
+
+
+def from_text(text: str, extractor, vocab: Vocabulary) -> Recipe | None:
+    extracted = extractor.extract([text_block(text)], vocab)
+    if extracted is None:
+        return None
+    return Recipe.from_extracted(extracted, source="Text", source_text=text)
