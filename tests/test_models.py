@@ -11,6 +11,23 @@ def test_canonical_url_keeps_the_trailing_slash_as_given():
     assert canonical_url("https://example.com/a/") == "https://example.com/a/"
 
 
+def test_recipe_source_url_is_canonical_at_construction():
+    recipe = Recipe(
+        name="Braise",
+        cuisine="Chinese",
+        meal=["Dinner"],
+        difficulty="Easy",
+        time_min=90,
+        servings=4,
+        ingredients=[],
+        method=["Brown.", "Simmer."],
+        source="Web",
+        source_url="https://example.com/braise?utm_source=x#top",
+    )
+
+    assert recipe.source_url == "https://example.com/braise"
+
+
 def test_from_extracted_carries_provenance():
     extracted = ExtractedRecipe(
         name="Overnight pickled vegetables",

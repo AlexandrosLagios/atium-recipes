@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .llm import image_block, text_block
-from .models import Recipe, canonical_url
+from .models import Recipe
 from .notion import Vocabulary
 from .scrape import fetch_html, readable_text, scrape_jsonld
 from .social import fetch_social
@@ -46,18 +46,19 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
         if extracted is None:
             return None
         return Recipe.from_extracted(
-            extracted, source="Web", source_url=canonical_url(url), source_text=body
+            extracted, source="Web", source_url=url, source_text=body
         )
 
-    extracted = extractor.extract([text_block(scraped.as_prompt())], vocab)
+    prompt = scraped.as_prompt()
+    extracted = extractor.extract([text_block(prompt)], vocab)
     if extracted is None:
         return None
     recipe = Recipe.from_extracted(
         extracted,
         source="Web",
-        source_url=canonical_url(url),
+        source_url=url,
         image_url=scraped.image_url,
-        source_text=scraped.as_prompt(),
+        source_text=prompt,
         high_confidence=True,
     )
     # The scraper read these from structured data, so they beat the model.
@@ -105,7 +106,7 @@ def from_photo(
     return Recipe.from_extracted(
         extracted,
         source=source,
-        source_url=canonical_url(source_url),
+        source_url=source_url,
         image_url=image_url,
         source_text=caption,
     )

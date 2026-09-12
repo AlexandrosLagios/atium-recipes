@@ -1,7 +1,7 @@
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 def canonical_url(url: str) -> str:
@@ -32,6 +32,11 @@ class Recipe(ExtractedRecipe):
     image_url: str = ""
     source_text: str = ""
     high_confidence: bool = False
+
+    @field_validator("source_url")
+    @classmethod
+    def _canonicalize_source_url(cls, value: str) -> str:
+        return canonical_url(value)
 
     @classmethod
     def from_extracted(
