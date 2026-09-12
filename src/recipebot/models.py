@@ -1,12 +1,25 @@
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, field_validator
 
 
+# The video id is the whole identity of a YouTube watch URL, so stripping the
+# query would collapse every video onto one dedupe key and make every video
+# after the first look already saved.
+def _kept_query(parts) -> str:
+    host = parts.netloc.lower()
+    if host != "youtube.com" and not host.endswith(".youtube.com"):
+        return ""
+    if parts.path != "/watch":
+        return ""
+    video_id = parse_qs(parts.query).get("v", [""])[0]
+    return urlencode({"v": video_id}) if video_id else ""
+
+
 def canonical_url(url: str) -> str:
     parts = urlsplit(url.strip())
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, _kept_query(parts), ""))
 
 
 class Ingredient(BaseModel):

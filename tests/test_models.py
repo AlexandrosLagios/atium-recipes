@@ -11,6 +11,32 @@ def test_canonical_url_keeps_the_trailing_slash_as_given():
     assert canonical_url("https://example.com/a/") == "https://example.com/a/"
 
 
+def test_two_youtube_videos_do_not_share_one_canonical_url():
+    first = canonical_url("https://www.youtube.com/watch?v=AAAAAAAAAAA")
+    second = canonical_url("https://www.youtube.com/watch?v=BBBBBBBBBBB")
+
+    assert first == "https://www.youtube.com/watch?v=AAAAAAAAAAA"
+    assert first != second
+
+
+def test_youtube_tracking_parameters_are_stripped_but_the_video_id_stays():
+    tracked = "https://www.youtube.com/watch?v=AAAAAAAAAAA&list=PL1&t=42s&si=xyz#t=10"
+
+    assert canonical_url(tracked) == canonical_url("https://www.youtube.com/watch?v=AAAAAAAAAAA")
+
+
+def test_a_youtu_be_short_url_keeps_the_id_in_the_path():
+    assert canonical_url("https://youtu.be/AAAAAAAAAAA?si=xyz") == "https://youtu.be/AAAAAAAAAAA"
+
+
+def test_a_youtube_watch_url_without_a_video_id_keeps_no_query():
+    assert canonical_url("https://www.youtube.com/watch?list=PL1") == "https://www.youtube.com/watch"
+
+
+def test_a_non_youtube_query_string_is_still_stripped_entirely():
+    assert canonical_url("https://example.com/r?v=AAAAAAAAAAA") == "https://example.com/r"
+
+
 def test_recipe_source_url_is_canonical_at_construction():
     recipe = Recipe(
         name="Braise",

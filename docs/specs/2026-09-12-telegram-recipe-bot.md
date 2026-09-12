@@ -66,6 +66,9 @@ means not tried.
   chicken thighs". The quantity and the form stay in the page body only.
 - Strip the query string and the fragment from `Source URL` before the dedupe
   query and before the write. The user's own sample carried `?utm_source=`.
+  A `youtube.com/watch` URL is the one exception. Its `v` parameter carries the
+  video's identity, so keep `v` and strip every other parameter. Without that
+  exception every YouTube recipe collapses onto one dedupe key.
 - Before every extraction, read the Ingredients names and the existing
   `Cuisine`, `Meal`, and `Category` options, and inject them into the prompt.
   Reuse an existing name wherever the ingredient matches; mint a new one only
