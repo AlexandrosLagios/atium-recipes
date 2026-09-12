@@ -1,0 +1,154 @@
+import asyncio
+from unittest.mock import AsyncMock
+
+from recipebot import bot
+from recipebot.models import Ingredient, Recipe
+from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
+
+VOCAB = Vocabulary(
+    ingredients={"Chicken": "p1", "Soy sauce": "p3"}, cuisines=[], meals=[], categories=[]
+)
+
+
+def a_recipe(ingredients=None, **overrides) -> Recipe:
+    defaults = dict(
+        name="Braise",
+        cuisine="Chinese",
+        meal=["Dinner"],
+        difficulty="Easy",
+        time_min=90,
+        servings=4,
+        ingredients=ingredients or [Ingredient(name="Chicken")],
+        method=["Brown.", "Simmer."],
+        source="Web",
+        source_url="https://example.com/braise",
+    )
+    return Recipe(**{**defaults, **overrides})
+
+
+class FakeStore:
+    def __init__(self):
+        self.saved = []
+
+    def save_recipe(self, recipe, vocab, merges=None):
+        self.saved.append((recipe, merges))
+        return "https://notion.so/new"
+
+
+def make_query(data):
+    query = type("Q", (), {})()
+    query.data = data
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    return query
+
+
+def make_update(data):
+    update = type("U", (), {})()
+    update.effective_user = type("User", (), {"id": 1})()
+    update.callback_query = make_query(data)
+    return update
+
+
+def make_context(store):
+    context = type("C", (), {})()
+    context.bot_data = {"store": store}
+    return context
+
+
+def setup_function():
+    bot.PREVIEWS.clear()
+
+
+def test_preview_text_shows_the_fields_the_user_must_check():
+    text = bot.preview_text(a_recipe(), IngredientPlan())
+
+    assert "Braise" in text
+    assert "90" in text
+    assert "Chicken" in text
+
+
+def test_preview_text_names_the_near_match():
+    plan = IngredientPlan(near={"Soy Sauces": "Soy sauce"})
+
+    text = bot.preview_text(a_recipe(), plan)
+
+    assert "Soy Sauces" in text
+    assert "Soy sauce" in text
+
+
+def test_the_merge_button_appears_only_for_a_near_match():
+    without = bot.preview_markup("tok", IngredientPlan())
+    with_near = bot.preview_markup("tok", IngredientPlan(near={"Soy Sauces": "Soy sauce"}))
+
+    labels = [b.text for row in without.inline_keyboard for b in row]
+    assert not any("merge" in label.lower() for label in labels)
+
+    labels = [b.text for row in with_near.inline_keyboard for b in row]
+    assert any("merge" in label.lower() for label in labels)
+
+
+async def test_save_writes_the_recipe_and_clears_the_preview():
+    store = FakeStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    assert len(store.saved) == 1
+    assert store.saved[0][1] == {}
+    assert "tok" not in bot.PREVIEWS
+    assert "https://notion.so/new" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+async def test_save_and_merge_passes_the_merge_map():
+    store = FakeStore()
+    recipe = a_recipe([Ingredient(name="Soy Sauces")])
+    plan = reconcile_ingredients(VOCAB, recipe.ingredients)
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=recipe, vocab=VOCAB, merges=plan.near)
+    update = make_update("merge:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    assert store.saved[0][1] == {"Soy Sauces": "Soy sauce"}
+
+
+async def test_discard_writes_nothing():
+    store = FakeStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("drop:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    assert store.saved == []
+    assert "tok" not in bot.PREVIEWS
+
+
+async def test_a_forgotten_preview_says_so_and_writes_nothing():
+    store = FakeStore()
+    update = make_update("save:gone")
+
+    await bot.on_callback(update, make_context(store))
+
+    assert store.saved == []
+    assert "again" in update.callback_query.edit_message_text.call_args[0][0].lower()
+
+
+async def test_a_double_tap_on_save_writes_the_recipe_only_once():
+    store = FakeStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    first = make_update("save:tok")
+    second = make_update("save:tok")
+
+    await asyncio.gather(
+        bot.on_callback(first, make_context(store)),
+        bot.on_callback(second, make_context(store)),
+    )
+
+    assert len(store.saved) == 1
+    replies = [
+        first.callback_query.edit_message_text.call_args[0][0],
+        second.callback_query.edit_message_text.call_args[0][0],
+    ]
+    assert sum("Saved" in reply for reply in replies) == 1
+    assert sum(bot.EXPIRED_MESSAGE in reply for reply in replies) == 1

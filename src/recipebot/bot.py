@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import re
+import uuid
+from dataclasses import dataclass, field
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -17,7 +20,7 @@ from .config import Config
 from .extract import from_photo, from_text, from_url
 from .llm import Extractor
 from .models import Recipe
-from .notion import NotionStore, reconcile_ingredients
+from .notion import IngredientPlan, NotionStore, Vocabulary, reconcile_ingredients
 from .social import SocialBlocked
 
 log = logging.getLogger(__name__)
@@ -29,6 +32,19 @@ BLOCKED_MESSAGE = (
 )
 NO_RECIPE_MESSAGE = "I could not find a recipe in that."
 ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a different way."
+
+# ponytail: previews live in memory on purpose. A restart forgets them and the
+# user re-shares the link. Persist them only if a restart ever loses real work.
+PREVIEWS: dict[str, "Preview"] = {}
+
+EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
+
+
+@dataclass
+class Preview:
+    recipe: Recipe
+    vocab: Vocabulary
+    merges: dict[str, str] = field(default_factory=dict)
 
 
 def first_url(text: str) -> str:
@@ -62,9 +78,56 @@ async def handle_recipe(recipe: Recipe, store, vocab, update) -> None:
     await send_preview(recipe, plan, vocab, update)
 
 
+def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
+    lines = [
+        recipe.name,
+        f"{recipe.cuisine} | {', '.join(recipe.meal)} | {recipe.difficulty}",
+        f"{recipe.time_min} min | {recipe.servings} servings",
+        "",
+        "Ingredients: " + ", ".join(item.name for item in recipe.ingredients),
+        f"Method: {len(recipe.method)} steps",
+    ]
+    if plan.new:
+        lines.append("New ingredient rows: " + ", ".join(plan.new))
+    for proposed, resembles in plan.near.items():
+        lines.append(f'"{proposed}" looks like the existing "{resembles}".')
+    return "\n".join(lines)
+
+
+def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton("Save", callback_data=f"save:{token}")]
+    if plan.near:
+        row.append(InlineKeyboardButton("Save and merge", callback_data=f"merge:{token}"))
+    row.append(InlineKeyboardButton("Discard", callback_data=f"drop:{token}"))
+    return InlineKeyboardMarkup([row])
+
+
 async def send_preview(recipe, plan, vocab, update) -> None:
-    # Replaced in Task 13 by the Save / Save-and-merge / Discard preview.
-    await update.message.reply_text(f"Preview pending for {recipe.name}")
+    token = uuid.uuid4().hex
+    PREVIEWS[token] = Preview(recipe=recipe, vocab=vocab, merges=dict(plan.near))
+    await update.message.reply_text(
+        preview_text(recipe, plan), reply_markup=preview_markup(token, plan)
+    )
+
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    action, _, token = query.data.partition(":")
+
+    preview = PREVIEWS.pop(token, None)
+    if preview is None:
+        await query.edit_message_text(EXPIRED_MESSAGE)
+        return
+
+    if action == "drop":
+        await query.edit_message_text("Discarded.")
+        return
+
+    merges = preview.merges if action == "merge" else {}
+    store = context.bot_data["store"]
+    url = await asyncio.to_thread(store.save_recipe, preview.recipe, preview.vocab, merges)
+    await query.edit_message_text(f"Saved: {url}")
 
 
 async def _deliver(recipe_or_none, store, vocab, update) -> None:
@@ -145,6 +208,7 @@ def build_application(cfg: Config, store: NotionStore, extractor: Extractor) -> 
     )
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
+    application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.PHOTO, on_photo))
     application.add_handler(
         MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND, on_text)

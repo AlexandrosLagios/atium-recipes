@@ -129,7 +129,10 @@ async def test_a_near_match_forces_the_preview_even_when_high_confidence(monkeyp
     await bot.on_text(update, make_context(store, object()))
 
     assert store.saved == []
-    assert "Preview pending" in update.message.reply_text.call_args[0][0]
+    call = update.message.reply_text.call_args
+    assert "Braise" in call[0][0]
+    labels = [b.text for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert any("merge" in label.lower() for label in labels)
 
 
 def make_photo_update(caption=""):
