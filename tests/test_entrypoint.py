@@ -19,6 +19,7 @@ def test_the_gate_runs_before_every_other_handler():
     groups = sorted(application.handlers)
     assert groups[0] == -1
     assert isinstance(application.handlers[-1][0], TypeHandler)
+    assert application.handlers[-1][0].block is True
 
 
 def test_the_callback_handler_is_registered():

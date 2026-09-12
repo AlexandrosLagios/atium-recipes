@@ -42,7 +42,7 @@ class FakeStore:
 
     def save_recipe(self, recipe, vocab, merges=None):
         self.saved.append(recipe)
-        return "https://notion.so/new"
+        return "https://notion.so/new", True
 
 
 def make_update(text=None, photo=None):
@@ -93,6 +93,22 @@ async def test_a_high_confidence_recipe_writes_at_once(monkeypatch):
 
     assert len(store.saved) == 1
     assert "https://notion.so/new" in update.message.reply_text.call_args[0][0]
+
+
+async def test_a_high_confidence_recipe_saved_meanwhile_reports_already_saved(monkeypatch):
+    class DedupedStore(FakeStore):
+        def save_recipe(self, recipe, vocab, merges=None):
+            self.saved.append(recipe)
+            return "https://notion.so/existing", False
+
+    store = DedupedStore()
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
+    update = make_update(text="https://redhousespice.com/x/")
+
+    await bot.on_text(update, make_context(store, object()))
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Already saved: https://notion.so/existing" in reply
 
 
 async def test_a_blocked_instagram_url_asks_for_a_screenshot(monkeypatch):

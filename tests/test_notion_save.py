@@ -28,10 +28,27 @@ class FakeBlocks:
         self.children = FakeChildren()
 
 
+class FakeDataSources:
+    def __init__(self, existing_url=None):
+        self.existing_url = existing_url
+        self.queries = []
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        if self.existing_url:
+            return {
+                "results": [{"id": "existing", "url": self.existing_url}],
+                "has_more": False,
+                "next_cursor": None,
+            }
+        return {"results": [], "has_more": False, "next_cursor": None}
+
+
 class FakeClient:
-    def __init__(self):
+    def __init__(self, existing_url=None):
         self.pages = FakePages()
         self.blocks = FakeBlocks()
+        self.data_sources = FakeDataSources(existing_url)
 
 
 def a_recipe(ingredients) -> Recipe:
@@ -115,3 +132,26 @@ def test_a_repeated_new_ingredient_creates_one_row_and_links_it_once():
     ingredient_call, recipe_call = client.pages.created
     assert ingredient_call["properties"]["Name"]["title"][0]["text"]["content"] == "Star anise"
     assert recipe_call["properties"]["Ingredients"]["relation"] == [{"id": "page1"}]
+
+
+def test_save_recipe_returns_the_new_url_and_created_true_for_a_fresh_source():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    url, created = store.save_recipe(a_recipe([Ingredient(name="Chicken")]), VOCAB)
+
+    assert created is True
+    assert url == "https://notion.so/page1"
+
+
+def test_save_recipe_dedupes_by_source_url_and_creates_nothing():
+    client = FakeClient(existing_url="https://notion.so/existing")
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    url, created = store.save_recipe(
+        a_recipe([Ingredient(name="Star anise", category="Staples")]), VOCAB
+    )
+
+    assert created is False
+    assert url == "https://notion.so/existing"
+    assert client.pages.created == []

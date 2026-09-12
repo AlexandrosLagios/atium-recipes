@@ -72,8 +72,9 @@ def make_gate(allowed_user_id: int):
 async def handle_recipe(recipe: Recipe, store, vocab, update) -> None:
     plan = reconcile_ingredients(vocab, recipe.ingredients)
     if recipe.high_confidence and not plan.near:
-        url = await asyncio.to_thread(store.save_recipe, recipe, vocab)
-        await update.message.reply_text(f"Saved: {url}")
+        url, created = await asyncio.to_thread(store.save_recipe, recipe, vocab)
+        message = f"Saved: {url}" if created else f"Already saved: {url}"
+        await update.message.reply_text(message)
         return
     await send_preview(recipe, plan, vocab, update)
 
@@ -126,8 +127,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     merges = preview.merges if action == "merge" else {}
     store = context.bot_data["store"]
-    url = await asyncio.to_thread(store.save_recipe, preview.recipe, preview.vocab, merges)
-    await query.edit_message_text(f"Saved: {url}")
+    try:
+        url, created = await asyncio.to_thread(
+            store.save_recipe, preview.recipe, preview.vocab, merges
+        )
+    except Exception:
+        PREVIEWS[token] = preview
+        await query.edit_message_text("Saving failed. Tap Save to try again.")
+        raise
+    message = f"Saved: {url}" if created else f"Already saved: {url}"
+    await query.edit_message_text(message)
 
 
 async def _deliver(recipe_or_none, store, vocab, update) -> None:

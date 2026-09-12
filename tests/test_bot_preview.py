@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from recipebot import bot
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
@@ -32,7 +34,7 @@ class FakeStore:
 
     def save_recipe(self, recipe, vocab, merges=None):
         self.saved.append((recipe, merges))
-        return "https://notion.so/new"
+        return "https://notion.so/new", True
 
 
 def make_query(data):
@@ -132,6 +134,60 @@ async def test_a_forgotten_preview_says_so_and_writes_nothing():
 
     assert store.saved == []
     assert "again" in update.callback_query.edit_message_text.call_args[0][0].lower()
+
+
+async def test_save_reports_already_saved_when_the_store_deduped_by_source_url():
+    class AlreadySavedStore:
+        def __init__(self):
+            self.saved = []
+
+        def save_recipe(self, recipe, vocab, merges=None):
+            self.saved.append((recipe, merges))
+            return "https://notion.so/existing", False
+
+    store = AlreadySavedStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    assert "tok" not in bot.PREVIEWS
+    reply = update.callback_query.edit_message_text.call_args[0][0]
+    assert "Already saved: https://notion.so/existing" in reply
+
+
+async def test_a_save_failure_restores_the_preview_so_it_can_be_retried():
+    class FlakyStore:
+        def __init__(self):
+            self.calls = 0
+            self.saved = []
+
+        def save_recipe(self, recipe, vocab, merges=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Notion 502")
+            self.saved.append((recipe, merges))
+            return "https://notion.so/new", True
+
+    store = FlakyStore()
+    preview = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    bot.PREVIEWS["tok"] = preview
+    update = make_update("save:tok")
+
+    with pytest.raises(RuntimeError):
+        await bot.on_callback(update, make_context(store))
+
+    assert bot.PREVIEWS["tok"] is preview
+    failure_reply = update.callback_query.edit_message_text.call_args[0][0]
+    assert "failed" in failure_reply.lower()
+    assert "save" in failure_reply.lower()
+
+    retry = make_update("save:tok")
+    await bot.on_callback(retry, make_context(store))
+
+    assert "tok" not in bot.PREVIEWS
+    assert len(store.saved) == 1
+    assert "https://notion.so/new" in retry.callback_query.edit_message_text.call_args[0][0]
 
 
 async def test_a_double_tap_on_save_writes_the_recipe_only_once():

@@ -210,7 +210,11 @@ class NotionStore:
 
     def save_recipe(
         self, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str] | None = None
-    ) -> str:
+    ) -> tuple[str, bool]:
+        existing = self.find_by_url(recipe.source_url)
+        if existing:
+            return existing, False
+
         merges = merges or {}
         plan = reconcile_ingredients(vocab, recipe.ingredients)
         categories = {item.name: item.category for item in recipe.ingredients}
@@ -233,4 +237,5 @@ class NotionStore:
                 )
             page_ids.append(created[key])
 
-        return self.create_recipe(recipe, list(dict.fromkeys(page_ids)))
+        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)))
+        return url, True
