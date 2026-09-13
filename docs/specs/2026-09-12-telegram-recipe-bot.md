@@ -12,16 +12,21 @@ Five extraction paths converge on one `Recipe` object:
 | Input | Path | Confidence |
 | --- | --- | --- |
 | URL with JSON-LD | `recipe-scrapers`, no model | high |
-| URL without JSON-LD | readability text, then Claude | low |
-| Instagram or TikTok URL | caption via `yt-dlp`, keyframes via `ffmpeg`, then Claude text and vision | low |
-| Photo or screenshot | Claude vision | low |
-| Pasted text | Claude | low |
+| URL without JSON-LD | readability text, then the model | low |
+| Instagram or TikTok URL | caption via `yt-dlp`, keyframes via `ffmpeg`, then the model's text and vision | low |
+| Photo or screenshot | model vision | low |
+| Pasted text | the model | low |
 
-Use Haiku 4.5 for text and vision. Escalate to Sonnet 5 only when a parse
-returns empty. A high-confidence result writes to Notion at once and the bot
-replies with the page link. A low-confidence result produces a preview message
-with Save and Discard buttons and writes nothing until the user taps Save.
-Previews live in memory; a restart forgets them and the user re-shares.
+Run a fast model for text and vision, and escalate to a stronger model only
+when a parse returns empty. The provider and the two model ids are
+configuration, not code: `LLM_PROVIDER` selects `gemini` or `anthropic`, and
+`LLM_MODEL_FAST` and `LLM_MODEL_STRONG` override the ids. The current default
+is Gemini, `gemini-2.5-flash-lite` escalating to `gemini-2.5-flash`.
+
+A high-confidence result writes to Notion at once and the bot replies with the
+page link. A low-confidence result produces a preview message with Save and
+Discard buttons and writes nothing until the user taps Save. Previews live in
+memory; a restart forgets them and the user re-shares.
 
 Deployment is one Python service, one docker-compose service, `ffmpeg` and
 `yt-dlp` baked into the image, secrets in a compose env file on the VPS. The
