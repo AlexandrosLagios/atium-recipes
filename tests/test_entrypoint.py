@@ -5,10 +5,12 @@ from recipebot.config import Config
 
 CFG = Config(
     telegram_token="123:abc",
-    allowed_user_id=12345,
-    notion_token="ntn",
-    recipes_ds="ds-r",
-    ingredients_ds="ds-i",
+    allowed_user_ids=frozenset({12345}),
+    notion_client_id="c",
+    notion_client_secret="s",
+    notion_redirect_uri="https://bot.example/oauth/callback",
+    oauth_callback_port=8080,
+    db_path=":memory:",
     llm_provider="gemini",
     llm_api_key="g-key",
 )
@@ -37,8 +39,8 @@ from recipebot import __main__ as entrypoint
 
 
 def test_main_refuses_to_start_without_the_environment(monkeypatch):
-    for name in ("TELEGRAM_TOKEN", "TELEGRAM_ALLOWED_USER_ID", "NOTION_TOKEN",
-                 "NOTION_RECIPES_DS", "NOTION_INGREDIENTS_DS", "LLM_PROVIDER",
+    for name in ("TELEGRAM_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "NOTION_CLIENT_ID",
+                 "NOTION_CLIENT_SECRET", "NOTION_REDIRECT_URI", "LLM_PROVIDER",
                  "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
