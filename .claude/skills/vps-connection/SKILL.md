@@ -40,6 +40,10 @@ ssh -i ~/ZeroIchi.ssh alex@100.71.143.23
 inside it. The repository is public, so the clone needs no credentials.
 `.gitignore` lists `.env`, so `git pull` never touches it.
 
+`git pull` deploys whatever branch the clone has checked out. Run `git branch
+--show-current` in the clone before you deploy, and switch to `main` if it
+reports anything else.
+
 The box also runs `~/apps/vlp/` and `~/apps/proxy/`. Do not change either one
 from this project.
 
