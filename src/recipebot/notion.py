@@ -143,7 +143,12 @@ def _paragraphs(text: str) -> list[dict]:
 
 def _body_blocks(recipe: Recipe) -> list[dict]:
     blocks = [_block("heading_2", "Ingredients")]
+    group = ""
     for item in recipe.ingredients:
+        if item.group != group:
+            group = item.group
+            if group:
+                blocks.append(_block("heading_3", group))
         line = f"{item.quantity} {item.name}".strip()
         blocks.append(_block("bulleted_list_item", line))
     blocks.append(_block("heading_2", "Method"))

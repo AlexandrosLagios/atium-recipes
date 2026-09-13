@@ -144,6 +144,42 @@ def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
     assert toggle["toggle"]["children"][0]["paragraph"]["rich_text"][0]["text"]["content"] == "raw body"
 
 
+def test_an_ingredient_group_becomes_a_subheading_above_its_bullets():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    recipe = a_recipe(
+        ingredients=[
+            Ingredient(name="Chicken breast", quantity="565 g", group="Stir-Fry"),
+            Ingredient(name="Broccoli", quantity="360 g", group="Stir-Fry"),
+            Ingredient(name="Soy sauce", quantity="80 ml", group="Sauce"),
+        ]
+    )
+
+    store.create_recipe(recipe, ["p2"], VOCAB)
+
+    body = [
+        (b["type"], b[b["type"]]["rich_text"][0]["text"]["content"])
+        for b in client.pages.created[0]["children"]
+        if b["type"] in ("heading_2", "heading_3", "bulleted_list_item")
+    ]
+    assert body[:5] == [
+        ("heading_2", "Ingredients"),
+        ("heading_3", "Stir-Fry"),
+        ("bulleted_list_item", "565 g Chicken breast"),
+        ("bulleted_list_item", "360 g Broccoli"),
+        ("heading_3", "Sauce"),
+    ]
+
+
+def test_an_ungrouped_ingredient_list_carries_no_subheading():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(), ["p2"], VOCAB)
+
+    assert not [b for b in client.pages.created[0]["children"] if b["type"] == "heading_3"]
+
+
 def test_notes_become_bullets_between_the_notes_heading_and_the_source_toggle():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
