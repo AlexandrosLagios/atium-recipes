@@ -9,6 +9,9 @@ SYSTEM = """You extract exactly one recipe from the material the user shares.
 
 Rules you must follow:
 - Ingredient names are shopping level and singular: "Chicken", never "boneless chicken thighs", never "Chickens". Put the quantity and the form in the quantity field instead.
+- Quantities are metric, in the quantity field and inside a method step alike. Convert mass to g, or to kg above 1000 g. Convert volume to ml, or to l above 1000 ml. Convert length to cm and temperature to °C. Keep tbsp and tsp, which are already metric at 15 ml and 5 ml. Convert a cup by what it holds: 1 cup of flour is 120 g, 1 cup of butter is 225 g, 1 cup of a liquid is 240 ml.
+- Round a converted number to what a kitchen measures: 1 lb is 450 g, 8 oz is 225 g, 375°F is 190°C, 1/4 cup of water is 60 ml. Never keep the original unit in parentheses.
+- Write a quantity as a number, a space, then a lowercase unit: "200 g", "180 ml", "1.5 tbsp", "190°C". Write a fraction as a decimal. Give a whole item as a count and never as a weight: "2", "1 medium", "3 cloves". Keep an imprecise amount as the recipe writes it, such as "a pinch" or "to taste".
 - Reuse an ingredient name from the known list below whenever the ingredient matches. Mint a new name only when the ingredient is genuinely new.
 - Choose cuisine, meal, and ingredient category values from the known options below whenever one fits. A value must never contain a comma.
 - time_min is the total time in minutes including resting, marinating, and chilling. An overnight rest is at least 480 minutes.
