@@ -123,7 +123,7 @@ def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    store.create_recipe(a_recipe(), ["p2"], VOCAB)
+    store.create_recipe(a_recipe(notes=["Keep it cold."]), ["p2"], VOCAB)
 
     blocks = client.pages.created[0]["children"]
     headings = [
@@ -233,6 +233,22 @@ def test_notes_become_bullets_between_the_notes_heading_and_the_source_toggle():
     )
     assert blocks[index + 1]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == note
     assert blocks[index + 2]["type"] == "toggle"
+
+
+def test_a_recipe_without_notes_gets_no_notes_heading():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(notes=[]), ["p2"], VOCAB)
+
+    blocks = client.pages.created[0]["children"]
+    headings = [
+        b["heading_2"]["rich_text"][0]["text"]["content"]
+        for b in blocks
+        if b["type"] == "heading_2"
+    ]
+    assert headings == ["Ingredients", "Method"]
+    assert blocks[-1]["type"] == "toggle"
 
 
 def test_more_than_a_hundred_blocks_are_appended_in_chunks():
