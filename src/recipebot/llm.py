@@ -21,6 +21,7 @@ Rules you must follow:
 - keeps_days is how many days the finished dish keeps: in the fridge, or at room temperature for a dish that lives in a jar or a tin, such as cookies or roasted nuts. Use the figure the recipe states. Most recipes state none, so estimate from 3 to 4 days for a cooked dish. A pickled or a marinated dish keeps 5 to 7 days. A dish whose texture fails before it spoils, such as rice noodles or anything fried and crisp, keeps 2 to 3 days. Use 0 when the dish has to be eaten straight away.
 - difficulty is "Easy" unless the recipe needs a technique a home cook would have to practise, in which case it is "Hard".
 - Method steps are whole sentences in order.
+- notes carry the substitutions, the tips, and the storage or serving advice the source gives outside the method. Write one whole sentence each, and take only what the source states. Return an empty list when the source gives none.
 - emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits.
 
 If the material does not contain a recipe, return empty ingredients and an empty method."""

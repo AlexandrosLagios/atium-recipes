@@ -67,6 +67,7 @@ class ExtractedRecipe(BaseModel):
     servings: int
     ingredients: list[Ingredient]
     method: list[str]
+    notes: list[str] = []
     emoji: str = ""
 
     @field_validator("emoji")

@@ -144,6 +144,23 @@ def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
     assert toggle["toggle"]["children"][0]["paragraph"]["rich_text"][0]["text"]["content"] == "raw body"
 
 
+def test_notes_become_bullets_between_the_notes_heading_and_the_source_toggle():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    note = "Cider vinegar stands in for rice vinegar."
+
+    store.create_recipe(a_recipe(notes=[note]), ["p2"], VOCAB)
+
+    blocks = client.pages.created[0]["children"]
+    index = next(
+        i
+        for i, b in enumerate(blocks)
+        if b["type"] == "heading_2" and b["heading_2"]["rich_text"][0]["text"]["content"] == "Notes"
+    )
+    assert blocks[index + 1]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == note
+    assert blocks[index + 2]["type"] == "toggle"
+
+
 def test_more_than_a_hundred_blocks_are_appended_in_chunks():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
