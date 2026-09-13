@@ -47,10 +47,13 @@ reports anything else.
 The box also runs `~/apps/vlp/` and `~/apps/proxy/`. Do not change either one
 from this project.
 
-The bot has no ingress and no database. It uses Telegram long polling, so it
-opens no inbound port. Do not add a Caddy site block, a hostname, a DNS record,
-a TLS certificate, the `internal` network, or any port binding. `vlp` needs all
-of them; this bot needs none of them.
+The bot opens no inbound port for Telegram traffic; it uses long polling.
+It does own one ingress path, for the Notion OAuth callback only: one
+Caddy site block on the shared proxy at `~/apps/proxy`, one unproxied
+`atiumaddict.com` DNS record, the `internal` Docker network, and
+`127.0.0.1:${OAUTH_CALLBACK_PORT}` published from the container. Do not
+add any ingress beyond that one callback path, and do not change `vlp` or
+`portofino`'s own site blocks from this project.
 
 Compose project: `recipeient`, one service named `recipebot`. The container is
 `recipeient-recipebot-1`, so read the log with `docker compose logs` from the
