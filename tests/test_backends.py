@@ -1,11 +1,15 @@
 import base64
 
 import anthropic
+from google.genai import errors
 
 from recipebot.backends import (
     ANTHROPIC_FAST,
     ANTHROPIC_STRONG,
+    GEMINI_FAST,
+    GEMINI_STRONG,
     AnthropicBackend,
+    GeminiBackend,
 )
 from recipebot.llm import image_block, text_block
 from recipebot.models import ExtractedRecipe, Ingredient
@@ -126,3 +130,95 @@ def test_anthropic_recognises_a_rate_limit():
 
 def test_anthropic_owns_its_sdk_error_type():
     assert AnthropicBackend.api_error == (anthropic.APIStatusError,)
+
+
+class FakeModels:
+    def __init__(self, parsed):
+        self.parsed = parsed
+        self.calls = []
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("R", (), {"parsed": self.parsed})()
+
+
+class FakeGeminiClient:
+    def __init__(self, parsed=FULL):
+        self.models = FakeModels(parsed)
+
+
+def test_gemini_defaults_to_the_documented_model_pair():
+    backend = GeminiBackend(FakeGeminiClient())
+
+    assert (backend.fast, backend.strong) == (GEMINI_FAST, GEMINI_STRONG)
+    assert (GEMINI_FAST, GEMINI_STRONG) == (
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+    )
+
+
+def test_gemini_accepts_overridden_model_ids():
+    backend = GeminiBackend(FakeGeminiClient(), fast="f", strong="s")
+
+    assert (backend.fast, backend.strong) == ("f", "s")
+
+
+def test_gemini_sends_the_structured_output_call_shape():
+    client = FakeGeminiClient()
+
+    GeminiBackend(client).complete("m", "system text", [text_block("body")])
+
+    call = client.models.calls[0]
+    assert call["model"] == "m"
+    assert call["config"].system_instruction == "system text"
+    assert call["config"].response_mime_type == "application/json"
+    assert call["config"].response_schema is ExtractedRecipe
+
+
+def test_gemini_translates_a_text_part():
+    client = FakeGeminiClient()
+
+    GeminiBackend(client).complete("m", "s", [text_block("body")])
+
+    contents = client.models.calls[0]["contents"]
+    assert [part.text for part in contents] == ["body"]
+
+
+def test_gemini_sends_raw_image_bytes_and_keeps_the_order():
+    client = FakeGeminiClient()
+
+    GeminiBackend(client).complete(
+        "m", "s", [image_block(PNG, "image/png"), text_block("body")]
+    )
+
+    contents = client.models.calls[0]["contents"]
+    assert contents[0].inline_data.data == PNG
+    assert contents[0].inline_data.mime_type == "image/png"
+    assert contents[1].text == "body"
+
+
+def test_gemini_returns_the_parsed_result():
+    backend = GeminiBackend(FakeGeminiClient())
+
+    assert backend.complete("m", "s", [text_block("body")]) == FULL
+
+
+def test_gemini_returns_none_when_nothing_parsed():
+    backend = GeminiBackend(FakeGeminiClient(parsed=None))
+
+    assert backend.complete("m", "s", [text_block("body")]) is None
+
+
+def test_gemini_recognises_a_rate_limit():
+    backend = GeminiBackend(FakeGeminiClient())
+
+    assert backend.is_rate_limited(errors.ClientError(429, {})) is True
+    assert backend.is_rate_limited(errors.ClientError(400, {})) is False
+    assert backend.is_rate_limited(errors.ServerError(500, {})) is False
+    assert backend.is_rate_limited(RuntimeError("unrelated")) is False
+
+
+def test_gemini_owns_its_sdk_error_type():
+    assert GeminiBackend.api_error == (errors.APIError,)
+    assert issubclass(errors.ClientError, errors.APIError)
+    assert issubclass(errors.ServerError, errors.APIError)
