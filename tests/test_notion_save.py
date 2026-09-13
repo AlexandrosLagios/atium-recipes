@@ -242,13 +242,40 @@ def test_create_user_databases_reuses_an_existing_pair_instead_of_duplicating():
         {"type": "child_database", "id": "db1", "child_database": {"title": "Ingredients"}},
         {"type": "child_database", "id": "db2", "child_database": {"title": "Recipes"}},
     ]
-    client = FakeSchemaClient(existing_blocks=existing)
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(existing_blocks=existing, reciprocal_schema=reciprocal_schema)
     client.databases._by_id = {"db1": "ds1", "db2": "ds2"}
 
     recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
 
     assert (recipes_ds, ingredients_ds) == ("ds2", "ds1")
     assert client.databases.created == []
+
+
+def test_create_user_databases_rewires_ingredients_even_when_recipes_already_existed():
+    """Covers the gap where a prior call created Recipes but failed before
+    finishing the Ingredients wiring: a retry must still re-apply it, not
+    skip it just because Recipes is now found rather than freshly created."""
+    existing = [
+        {"type": "child_database", "id": "db1", "child_database": {"title": "Ingredients"}},
+        {"type": "child_database", "id": "db2", "child_database": {"title": "Recipes"}},
+    ]
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(existing_blocks=existing, reciprocal_schema=reciprocal_schema)
+    client.databases._by_id = {"db1": "ds1", "db2": "ds2"}
+
+    recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
+
+    assert (recipes_ds, ingredients_ds) == ("ds2", "ds1")
+    assert client.databases.created == []
+    assert len(client.data_sources.updated) == 1
+    update_call = client.data_sources.updated[0]
+    assert update_call["data_source_id"] == "ds1"
+    assert update_call["properties"]["Used in"] == FIXTURE["ingredients"]["properties"]["Used in"]
 
 
 def test_from_user_builds_a_store_from_a_user_record():

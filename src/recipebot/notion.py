@@ -189,11 +189,16 @@ def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[s
         }
         recipes_ds = _create_data_source(client, parent_page_id, "Recipes", properties)
 
-        reciprocal = _reciprocal_relation_property(client, ingredients_ds, recipes_ds)
-        updates = {"Used in": fixture["ingredients"]["properties"]["Used in"]}
-        if reciprocal != "Recipes":
-            updates[reciprocal] = {"name": "Recipes"}
-        client.data_sources.update(data_source_id=ingredients_ds, properties=updates)
+    # Re-run every call, not just on first creation: a retry after a failure
+    # between creating Recipes and finishing this wiring would otherwise find
+    # Recipes already there and skip the rename/rollup permanently. Notion's
+    # update is idempotent here, so repeating it on an already-wired pair is
+    # harmless.
+    reciprocal = _reciprocal_relation_property(client, ingredients_ds, recipes_ds)
+    updates = {"Used in": fixture["ingredients"]["properties"]["Used in"]}
+    if reciprocal != "Recipes":
+        updates[reciprocal] = {"name": "Recipes"}
+    client.data_sources.update(data_source_id=ingredients_ds, properties=updates)
 
     return recipes_ds, ingredients_ds
 
