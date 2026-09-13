@@ -112,8 +112,24 @@ CHILDREN_LIMIT = 100
 SOURCE_TEXT_BLOCK_LIMIT = 90
 
 
+# Notion measures rich text in UTF-16 code units, the way JavaScript does, so
+# an emoji costs two and a 2000-character Python slice comes back rejected as
+# 2003. Split on that measure, and never between the halves of one character.
+def _utf16_chunks(text: str, limit: int = RICH_TEXT_LIMIT) -> list[str]:
+    chunks, current, used = [], [], 0
+    for char in text:
+        cost = 2 if ord(char) > 0xFFFF else 1
+        if used + cost > limit:
+            chunks.append("".join(current))
+            current, used = [], 0
+        current.append(char)
+        used += cost
+    chunks.append("".join(current))
+    return chunks
+
+
 def _rt(text: str) -> list[dict]:
-    return [{"type": "text", "text": {"content": text[:RICH_TEXT_LIMIT]}}]
+    return [{"type": "text", "text": {"content": _utf16_chunks(text)[0]}}]
 
 
 def _block(kind: str, text: str, **extra) -> dict:
@@ -121,9 +137,7 @@ def _block(kind: str, text: str, **extra) -> dict:
 
 
 def _paragraphs(text: str) -> list[dict]:
-    chunks = [
-        text[i : i + RICH_TEXT_LIMIT] for i in range(0, len(text), RICH_TEXT_LIMIT)
-    ] or [""]
+    chunks = _utf16_chunks(text)
     return [_block("paragraph", chunk) for chunk in chunks[:SOURCE_TEXT_BLOCK_LIMIT]]
 
 

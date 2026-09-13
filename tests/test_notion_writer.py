@@ -1,5 +1,5 @@
 from recipebot.models import Ingredient, Recipe
-from recipebot.notion import NotionStore, Vocabulary
+from recipebot.notion import RICH_TEXT_LIMIT, NotionStore, Vocabulary, _body_blocks, _rt
 
 VOCAB = Vocabulary(
     ingredients={},
@@ -347,3 +347,29 @@ def test_create_recipe_omits_the_icon_when_the_model_gave_no_emoji():
     store.create_recipe(a_recipe(emoji=""), ["p2"], VOCAB)
 
     assert "icon" not in client.pages.created[0]
+
+
+def utf16_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def test_an_emoji_run_is_measured_in_utf16_units_the_way_notion_measures_it():
+    # 1997 plain characters plus three emoji is 2000 Python characters but 2003
+    # of Notion's, which it rejected with a 400 on the whole page create.
+    content = _rt("a" * 1997 + "\U0001f362\U0001f372\U0001f958")[0]["text"]["content"]
+
+    assert utf16_units(content) <= RICH_TEXT_LIMIT
+
+
+def test_the_source_toggle_splits_long_text_without_losing_or_splitting_a_character():
+    text = ("a" * 1997 + "\U0001f362\U0001f372\U0001f958") * 3
+    recipe = a_recipe(source_text=text)
+
+    toggle = next(b for b in _body_blocks(recipe) if b["type"] == "toggle")
+    chunks = [
+        child["paragraph"]["rich_text"][0]["text"]["content"]
+        for child in toggle["toggle"]["children"]
+    ]
+
+    assert max(utf16_units(chunk) for chunk in chunks) <= RICH_TEXT_LIMIT
+    assert "".join(chunks) == text
