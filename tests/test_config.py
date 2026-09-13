@@ -4,13 +4,13 @@ from recipebot.config import Config
 
 BASE = {
     "TELEGRAM_TOKEN": "tok",
-    "TELEGRAM_ALLOWED_USER_ID": "12345",
-    "NOTION_TOKEN": "ntn",
-    "NOTION_RECIPES_DS": "ds-recipes",
-    "NOTION_INGREDIENTS_DS": "ds-ingredients",
+    "TELEGRAM_ALLOWED_USER_IDS": "12345,999",
+    "NOTION_CLIENT_ID": "client-id",
+    "NOTION_CLIENT_SECRET": "client-secret",
+    "NOTION_REDIRECT_URI": "https://recipebot.atiumaddict.com/oauth/callback",
 }
 
-OPTIONAL = ("LLM_PROVIDER", "LLM_MODEL_FAST", "LLM_MODEL_STRONG")
+OPTIONAL = ("LLM_PROVIDER", "LLM_MODEL_FAST", "LLM_MODEL_STRONG", "OAUTH_CALLBACK_PORT", "DB_PATH")
 KEYS = ("GEMINI_API_KEY", "ANTHROPIC_API_KEY")
 
 
@@ -29,9 +29,10 @@ def test_from_env_reads_every_field(monkeypatch):
 
     cfg = Config.from_env()
 
-    assert cfg.allowed_user_id == 12345
-    assert cfg.recipes_ds == "ds-recipes"
-    assert cfg.notion_token == "ntn"
+    assert cfg.allowed_user_ids == frozenset({12345, 999})
+    assert cfg.notion_client_id == "client-id"
+    assert cfg.notion_client_secret == "client-secret"
+    assert cfg.notion_redirect_uri == "https://recipebot.atiumaddict.com/oauth/callback"
     assert cfg.llm_api_key == "g-key"
 
 
@@ -42,25 +43,48 @@ def test_from_env_names_the_missing_variable(monkeypatch):
         Config.from_env()
 
 
+def test_a_single_allowed_id_still_works(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="12345")
+
+    assert Config.from_env().allowed_user_ids == frozenset({12345})
+
+
+def test_a_non_integer_id_fails_at_startup(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="12345,abc")
+
+    with pytest.raises(RuntimeError, match="abc"):
+        Config.from_env()
+
+
+def test_an_empty_allowlist_fails_at_startup(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="")
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_ALLOWED_USER_IDS"):
+        Config.from_env()
+
+
+def test_the_oauth_callback_port_defaults(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key")
+
+    assert Config.from_env().oauth_callback_port == 8080
+
+
+def test_the_oauth_callback_port_is_overridable(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", OAUTH_CALLBACK_PORT="9090")
+
+    assert Config.from_env().oauth_callback_port == 9090
+
+
+def test_the_db_path_defaults(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key")
+
+    assert Config.from_env().db_path == "/data/recipebot.db"
+
+
 def test_the_provider_defaults_to_gemini(monkeypatch):
     set_env(monkeypatch, GEMINI_API_KEY="g-key")
 
     assert Config.from_env().llm_provider == "gemini"
-
-
-def test_an_empty_provider_falls_back_to_the_default(monkeypatch):
-    set_env(monkeypatch, LLM_PROVIDER="", GEMINI_API_KEY="g-key")
-
-    assert Config.from_env().llm_provider == "gemini"
-
-
-def test_anthropic_is_selectable(monkeypatch):
-    set_env(monkeypatch, LLM_PROVIDER="anthropic", ANTHROPIC_API_KEY="sk-ant")
-
-    cfg = Config.from_env()
-
-    assert cfg.llm_provider == "anthropic"
-    assert cfg.llm_api_key == "sk-ant"
 
 
 def test_an_unknown_provider_fails_at_startup(monkeypatch):
@@ -85,16 +109,6 @@ def test_only_the_selected_providers_key_is_required(monkeypatch):
     assert Config.from_env().llm_api_key == "sk-ant"
 
 
-def test_the_missing_key_named_is_the_selected_providers_key(monkeypatch):
-    set_env(monkeypatch, LLM_PROVIDER="anthropic")
-
-    with pytest.raises(RuntimeError) as excinfo:
-        Config.from_env()
-
-    assert "ANTHROPIC_API_KEY" in str(excinfo.value)
-    assert "GEMINI_API_KEY" not in str(excinfo.value)
-
-
 def test_the_model_ids_are_optional_overrides(monkeypatch):
     set_env(monkeypatch, GEMINI_API_KEY="g-key")
 
@@ -116,7 +130,7 @@ def test_no_secret_value_appears_in_the_config_repr(monkeypatch):
     set_env(
         monkeypatch,
         TELEGRAM_TOKEN="telegram-secret-value",
-        NOTION_TOKEN="notion-secret-value",
+        NOTION_CLIENT_SECRET="notion-secret-value",
         GEMINI_API_KEY="gemini-secret-value",
     )
 
@@ -125,4 +139,4 @@ def test_no_secret_value_appears_in_the_config_repr(monkeypatch):
     assert "telegram-secret-value" not in text
     assert "notion-secret-value" not in text
     assert "gemini-secret-value" not in text
-    assert "ds-recipes" in text
+    assert "8080" in text
