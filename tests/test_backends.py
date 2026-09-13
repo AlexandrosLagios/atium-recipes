@@ -16,6 +16,8 @@ from recipebot.backends import (
     MAX_TOKENS,
     AnthropicBackend,
     GeminiBackend,
+    _anthropic_block,
+    _gemini_part,
     backend_from_config,
 )
 from recipebot.config import Config
@@ -359,3 +361,21 @@ def test_backend_from_config_gives_the_gemini_client_a_request_timeout():
     assert options.timeout == GEMINI_TIMEOUT_MS
     # The SDK reads HttpOptions.timeout as milliseconds.
     assert 0 < GEMINI_TIMEOUT_MS / 1000 <= 180
+
+
+def test_a_pdf_becomes_an_anthropic_document_block_not_an_image_block():
+    block = _anthropic_block(image_block(b"%PDF-1.4", "application/pdf"))
+
+    assert block["type"] == "document"
+    assert block["source"]["media_type"] == "application/pdf"
+
+
+def test_an_image_still_becomes_an_anthropic_image_block():
+    assert _anthropic_block(image_block(PNG, "image/png"))["type"] == "image"
+
+
+def test_gemini_carries_a_pdf_through_as_inline_data():
+    part = _gemini_part(image_block(b"%PDF-1.4", "application/pdf"))
+
+    assert part.inline_data.mime_type == "application/pdf"
+    assert part.inline_data.data == b"%PDF-1.4"

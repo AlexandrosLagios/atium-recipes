@@ -3,7 +3,7 @@ import datetime as dt
 from unittest.mock import AsyncMock
 
 import pytest
-from telegram import Chat, Message, PhotoSize, Update
+from telegram import Chat, Document, Message, PhotoSize, Update
 from telegram.ext import filters
 
 from recipebot import bot
@@ -219,7 +219,17 @@ def make_photo_update(caption=""):
     update.message.text = None
     update.message.caption = caption
     update.message.photo = [type("P", (), {"file_id": "small"})(), type("P", (), {"file_id": "big"})()]
+    update.message.document = None
     update.message.reply_text = AsyncMock()
+    return update
+
+
+def make_document_update(mime_type="application/pdf", file_size=1024, caption=""):
+    update = make_photo_update(caption=caption)
+    update.message.photo = []
+    update.message.document = type(
+        "D", (), {"file_id": "doc", "mime_type": mime_type, "file_size": file_size}
+    )()
     return update
 
 
@@ -243,7 +253,7 @@ async def test_a_high_confidence_photo_recipe_writes_at_once(monkeypatch):
     update = make_photo_update(caption="dinner tonight")
     context = make_photo_context(store, object())
 
-    await bot.on_photo(update, context)
+    await bot.on_media(update, context)
 
     assert len(store.saved) == 1
     assert "https://notion.so/new" in update.message.reply_text.call_args[0][0]
@@ -256,10 +266,56 @@ async def test_a_photo_with_no_recipe_says_so(monkeypatch):
     update = make_photo_update()
     context = make_photo_context(store, object())
 
-    await bot.on_photo(update, context)
+    await bot.on_media(update, context)
 
     assert store.saved == []
     assert "recipe" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_a_pdf_document_reaches_the_extractor_with_its_own_media_type(monkeypatch):
+    seen = {}
+
+    def fake_from_photo(images, extractor, vocab, **kwargs):
+        seen["images"] = images
+        return a_recipe()
+
+    monkeypatch.setattr(bot, "from_photo", fake_from_photo)
+    store = FakeStore()
+    update = make_document_update()
+    context = make_photo_context(store, object())
+
+    await bot.on_media(update, context)
+
+    assert seen["images"] == [(b"\xff\xd8\xff", "application/pdf")]
+    assert len(store.saved) == 1
+    context.bot.get_file.assert_awaited_once_with("doc")
+
+
+@pytest.mark.parametrize("mime_type", ["application/zip", "video/mp4", "image/svg+xml", ""])
+async def test_a_document_of_an_unreadable_type_is_refused(monkeypatch, mime_type):
+    monkeypatch.setattr(bot, "from_photo", lambda *a, **k: a_recipe())
+    store = FakeStore()
+    update = make_document_update(mime_type=mime_type)
+    context = make_photo_context(store, object())
+
+    await bot.on_media(update, context)
+
+    assert store.saved == []
+    context.bot.get_file.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(bot.FILE_TYPE_MESSAGE)
+
+
+async def test_a_document_over_the_telegram_limit_is_refused(monkeypatch):
+    monkeypatch.setattr(bot, "from_photo", lambda *a, **k: a_recipe())
+    store = FakeStore()
+    update = make_document_update(file_size=bot.MAX_FILE_BYTES + 1)
+    context = make_photo_context(store, object())
+
+    await bot.on_media(update, context)
+
+    assert store.saved == []
+    context.bot.get_file.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(bot.TOO_BIG_MESSAGE)
 
 
 async def test_on_error_replies_to_the_allowed_user():
@@ -283,7 +339,7 @@ async def test_on_error_stays_silent_for_a_foreign_user():
     update.message.reply_text.assert_not_awaited()
 
 
-PHOTO_HANDLER_FILTER = filters.UpdateType.MESSAGE & filters.PHOTO
+PHOTO_HANDLER_FILTER = filters.UpdateType.MESSAGE & (filters.PHOTO | filters.Document.ALL)
 TEXT_HANDLER_FILTER = filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND
 
 CHAT = Chat(id=1, type="private")
@@ -293,6 +349,15 @@ NOW = dt.datetime.now(dt.timezone.utc)
 def test_a_photo_with_a_caption_matches_the_photo_filter_not_the_text_filter():
     photo = (PhotoSize(file_id="x", file_unique_id="x", width=10, height=10),)
     message = Message(message_id=1, date=NOW, chat=CHAT, photo=photo, caption="yum")
+    update = Update(update_id=1, message=message)
+
+    assert PHOTO_HANDLER_FILTER.check_update(update)
+    assert not TEXT_HANDLER_FILTER.check_update(update)
+
+
+def test_a_pdf_document_matches_the_media_filter_not_the_text_filter():
+    document = Document(file_id="d", file_unique_id="d", mime_type="application/pdf")
+    message = Message(message_id=1, date=NOW, chat=CHAT, document=document, caption="yum")
     update = Update(update_id=1, message=message)
 
     assert PHOTO_HANDLER_FILTER.check_update(update)

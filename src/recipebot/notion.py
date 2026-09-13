@@ -176,6 +176,28 @@ def _computed(properties: dict) -> dict:
     return {name: config for name, config in properties.items() if config.get("type") in ("rollup", "formula")}
 
 
+# A user connected before a property was added to the fixture keeps the older
+# schema, and every save then fails whole with "X is not a property that
+# exists". Repairing on read costs nothing once the schema is current.
+def _add_missing_properties(client, data_source_id: str, schema: dict, fixture: dict) -> dict:
+    missing = {
+        name: config
+        for name, config in _creatable(fixture).items()
+        if name not in schema["properties"]
+    }
+    if not missing:
+        return schema
+    log.info("adding %s to %s", ", ".join(missing), data_source_id)
+    try:
+        return client.data_sources.update(data_source_id=data_source_id, properties=missing)
+    except APIResponseError as exc:
+        # Best effort only. vocabulary() runs on every message, so a refused
+        # repair must not cost the user the link and text paths too; a save
+        # that needs the property still fails, with the reason logged here.
+        log.warning("Notion refused the repair of %s: %s", data_source_id, exc)
+        return schema
+
+
 def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) -> str:
     schema = client.data_sources.retrieve(data_source_id=ingredients_ds)
     for name, config in schema["properties"].items():
@@ -269,9 +291,18 @@ class NotionStore:
         ingredients = {
             _title_of(page): page["id"] for page in self._all_pages(self.ingredients_ds)
         }
-        recipes_schema = self.client.data_sources.retrieve(data_source_id=self.recipes_ds)
-        ingredients_schema = self.client.data_sources.retrieve(
-            data_source_id=self.ingredients_ds
+        fixture = load_schema_fixture()
+        recipes_schema = _add_missing_properties(
+            self.client,
+            self.recipes_ds,
+            self.client.data_sources.retrieve(data_source_id=self.recipes_ds),
+            fixture["recipes"]["properties"],
+        )
+        ingredients_schema = _add_missing_properties(
+            self.client,
+            self.ingredients_ds,
+            self.client.data_sources.retrieve(data_source_id=self.ingredients_ds),
+            fixture["ingredients"]["properties"],
         )
         return Vocabulary(
             ingredients={name: pid for name, pid in ingredients.items() if name},
