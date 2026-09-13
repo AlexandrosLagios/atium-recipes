@@ -32,3 +32,15 @@ Every extraction starts on the fast model and escalates to the strong one
 only when the fast model returns nothing usable. `LLM_MODEL_FAST` and
 `LLM_MODEL_STRONG` override the two model ids, so a model change needs no
 code change.
+
+## Deployment
+
+The bot runs on a Hetzner VPS as a Docker Compose service. A cron entry there
+runs `deploy/deploy.sh` every two minutes. The script does nothing until
+`origin/main` moves, then it asks the GitHub checks API whether every check run
+on that commit finished green, and only then fast-forwards and rebuilds. A red
+or still-running commit waits for the next tick.
+
+A merge to `main` therefore reaches the VPS on its own, within about two
+minutes of the `test` workflow going green. Read
+`.claude/skills/vps-connection/SKILL.md` to reach the box or to deploy by hand.
