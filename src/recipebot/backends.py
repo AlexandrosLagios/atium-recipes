@@ -14,6 +14,8 @@ ANTHROPIC_STRONG = "claude-sonnet-5"
 GEMINI_FAST = "gemini-3.1-flash-lite"
 GEMINI_STRONG = "gemini-3.7-flash"
 
+PDF_MEDIA_TYPE = "application/pdf"
+
 MAX_TOKENS = 8000
 
 GEMINI_TIMEOUT_MS = 60_000
@@ -22,8 +24,10 @@ GEMINI_ATTEMPTS = 3
 
 def _anthropic_block(part: Part) -> dict:
     if isinstance(part, ImagePart):
+        # A PDF carries the same base64 source but has to be declared as a
+        # document; sent as an image, the API rejects the media type.
         return {
-            "type": "image",
+            "type": "document" if part.media_type == PDF_MEDIA_TYPE else "image",
             "source": {
                 "type": "base64",
                 "media_type": part.media_type,
