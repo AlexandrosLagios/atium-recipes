@@ -1,5 +1,16 @@
 from recipebot.models import ExtractedRecipe, Ingredient, Recipe, canonical_url
 
+EXTRACTED = {
+    "name": "Overnight pickled vegetables",
+    "cuisine": "Chinese",
+    "meal": ["Side"],
+    "difficulty": "Easy",
+    "time_min": 745,
+    "servings": 4,
+    "ingredients": [Ingredient(name="Cucumber", quantity="2 medium")],
+    "method": ["Salt the cucumber."],
+}
+
 
 def test_canonical_url_strips_query_and_fragment():
     url = "https://redhousespice.com/overnight-pickled-vegetables/?utm_source=x#recipe"
@@ -120,3 +131,28 @@ def test_from_extracted_carries_provenance():
     assert recipe.high_confidence is True
     assert recipe.ingredients[0].name == "Cucumber"
     assert recipe.ingredients[0].category == "Vegetables and aromatics"
+
+
+def test_emoji_survives_a_plain_symbol():
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "🥘"}).emoji == "🥘"
+
+
+def test_emoji_keeps_a_whole_joined_sequence():
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "👨‍🍳"}).emoji == "👨‍🍳"
+
+
+def test_emoji_keeps_a_whole_flag():
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "🇬🇷"}).emoji == "🇬🇷"
+
+
+def test_emoji_keeps_only_the_first_of_several():
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "🥘🍝🍅"}).emoji == "🥘"
+
+
+def test_emoji_drops_a_word_the_model_returned_instead():
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "lasagne"}).emoji == ""
+    assert ExtractedRecipe(**{**EXTRACTED, "emoji": "  "}).emoji == ""
+
+
+def test_emoji_defaults_to_empty():
+    assert ExtractedRecipe(**EXTRACTED).emoji == ""
