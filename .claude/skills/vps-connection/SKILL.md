@@ -48,7 +48,9 @@ opens no inbound port. Do not add a Caddy site block, a hostname, a DNS record,
 a TLS certificate, the `internal` network, or any port binding. `vlp` needs all
 of them; this bot needs none of them.
 
-Container: `recipeient`.
+Compose project: `recipeient`, one service named `recipebot`. The container is
+`recipeient-recipebot-1`, so read the log with `docker compose logs` from the
+deployment root rather than with a container name.
 
 ## Operations
 
@@ -61,7 +63,7 @@ cd ~/apps/recipeient && git pull && docker compose up -d --build
 Read the log:
 
 ```bash
-docker logs --tail 50 recipeient
+cd ~/apps/recipeient && docker compose logs --tail 50
 ```
 
 `Application started` is the line that proves the bot polls Telegram.
