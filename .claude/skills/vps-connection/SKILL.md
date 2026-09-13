@@ -40,9 +40,10 @@ ssh -i ~/ZeroIchi.ssh alex@100.71.143.23
 inside it. The repository is public, so the clone needs no credentials.
 `.gitignore` lists `.env`, so `git pull` never touches it.
 
-`git pull` deploys whatever branch the clone has checked out. Run `git branch
---show-current` in the clone before you deploy, and switch to `main` if it
-reports anything else.
+`git pull` deploys whatever branch the clone has checked out, and the cron
+deploy fast-forwards to `origin/main`. Run `git branch --show-current` in the
+clone before you deploy by hand, and switch to `main` if it reports anything
+else.
 
 The box also runs `~/apps/vlp/` and `~/apps/proxy/`. Do not change either one
 from this project.
@@ -58,7 +59,21 @@ deployment root rather than with a container name.
 
 ## Operations
 
-Deploy the current `main`:
+Deploys are automatic. A user crontab entry runs `deploy/deploy.sh` every two
+minutes. The script does nothing until `origin/main` moves, then it asks the
+GitHub checks API whether every check run on that commit finished green, and
+only then fast-forwards and rebuilds. A red or still-running commit is skipped
+and retried on the next tick.
+
+```bash
+crontab -l                              # the schedule
+tail -20 ~/apps/recipeient-deploy.log   # what it did, and what it is waiting for
+```
+
+The crontab uses `flock -n`, so a slow rebuild never overlaps the next tick.
+The script needs no sudo and no GitHub token, because the repository is public.
+
+Deploy by hand, for a commit the checks never covered:
 
 ```bash
 cd ~/apps/recipeient && git pull && docker compose up -d --build
@@ -91,3 +106,12 @@ does nothing until the container restarts.
 - Matching the process with `pgrep -fl "python -m recipebot"`. That pattern
   finds nothing, because the command line holds the resolved interpreter path.
   Match on `recipebot` alone.
+- Installing the deploy as a systemd unit or a `systemctl --user` timer. Both
+  need sudo on this box: a system unit needs root, and a user timer needs
+  `loginctl enable-linger alex`, which needs root too. `sudo` here always asks
+  for a password, so the deploy runs from the user crontab instead.
+- Registering a self-hosted GitHub Actions runner for this repository. The two
+  runners on the box are scoped to `AlexandrosLagios/vlp` and
+  `AlexandrosLagios/portofino`, which are private. `atium-recipes` is public, so
+  a fork's pull request could run arbitrary code beside the two Postgres
+  containers. The cron deploy exists to avoid exactly that.
