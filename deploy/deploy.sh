@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$HOME/apps/recipeient}"
-REPO="${REPO:-AlexandrosLagios/recipeient}"
+REPO="${REPO:-AlexandrosLagios/atium-recipes}"
 
 # Bash reads a script while it runs, and this script pulls its own directory.
 # Keep every statement in a function, so the whole file parses before the pull.
