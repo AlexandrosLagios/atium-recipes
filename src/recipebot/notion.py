@@ -176,28 +176,6 @@ def _computed(properties: dict) -> dict:
     return {name: config for name, config in properties.items() if config.get("type") in ("rollup", "formula")}
 
 
-# A user connected before a property was added to the fixture keeps the older
-# schema, and every save then fails whole with "X is not a property that
-# exists". Repairing on read costs nothing once the schema is current.
-def _add_missing_properties(client, data_source_id: str, schema: dict, fixture: dict) -> dict:
-    missing = {
-        name: config
-        for name, config in _creatable(fixture).items()
-        if name not in schema["properties"]
-    }
-    if not missing:
-        return schema
-    log.info("adding %s to %s", ", ".join(missing), data_source_id)
-    try:
-        return client.data_sources.update(data_source_id=data_source_id, properties=missing)
-    except APIResponseError as exc:
-        # Best effort only. vocabulary() runs on every message, so a refused
-        # repair must not cost the user the link and text paths too; a save
-        # that needs the property still fails, with the reason logged here.
-        log.warning("Notion refused the repair of %s: %s", data_source_id, exc)
-        return schema
-
-
 def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) -> str:
     schema = client.data_sources.retrieve(data_source_id=ingredients_ds)
     for name, config in schema["properties"].items():
@@ -214,7 +192,7 @@ def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) 
 # reads a related page. Applying one property per request keeps that single
 # unsettable formula from costing the user every other property and the whole
 # connect. Send them as one request again if Notion ever lifts the limit.
-def _apply_computed(client, data_source_id: str, properties: dict) -> list[str]:
+def _apply_properties(client, data_source_id: str, properties: dict) -> list[str]:
     skipped = []
     for name, config in properties.items():
         try:
@@ -258,12 +236,35 @@ def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[s
             data_source_id=ingredients_ds, properties={reciprocal: {"name": "Recipes"}}
         )
 
-    skipped = _apply_computed(client, ingredients_ds, _computed(fixture["ingredients"]["properties"]))
-    skipped += _apply_computed(client, recipes_ds, _computed(fixture["recipes"]["properties"]))
+    skipped = _apply_properties(client, ingredients_ds, _computed(fixture["ingredients"]["properties"]))
+    skipped += _apply_properties(client, recipes_ds, _computed(fixture["recipes"]["properties"]))
     if skipped:
         log.warning("built the pair under %s without %s", parent_page_id, ", ".join(skipped))
 
     return recipes_ds, ingredients_ds
+
+
+# A user's pair of databases is built to match the fixture once, at connect
+# time, so every property added to the fixture afterwards would never reach an
+# already-connected user. vocabulary() tops theirs up on the way past: it
+# already retrieves both live schemas for the select options, so the comparison
+# costs nothing and the update only fires when something is genuinely missing.
+#
+# Additive by name only, never a re-send: a user who added their own Cuisine
+# option keeps it. Two types are excluded because they would fail on every
+# message forever rather than once: the relation-traversing formula Notion
+# refuses to write (see _apply_properties), and the title, which a data source
+# can only hold one of, so a user who renamed theirs would buy a rejected
+# request per saved recipe.
+_UNBACKFILLABLE = frozenset({"formula", "title"})
+
+
+def _missing_properties(schema: dict, fixture: dict) -> dict:
+    return {
+        name: config
+        for name, config in fixture.items()
+        if name not in schema["properties"] and config.get("type") not in _UNBACKFILLABLE
+    }
 
 
 class NotionStore:
@@ -291,25 +292,32 @@ class NotionStore:
         ingredients = {
             _title_of(page): page["id"] for page in self._all_pages(self.ingredients_ds)
         }
-        fixture = load_schema_fixture()
-        recipes_schema = _add_missing_properties(
-            self.client,
-            self.recipes_ds,
-            self.client.data_sources.retrieve(data_source_id=self.recipes_ds),
-            fixture["recipes"]["properties"],
+        recipes_schema = self.client.data_sources.retrieve(data_source_id=self.recipes_ds)
+        ingredients_schema = self.client.data_sources.retrieve(
+            data_source_id=self.ingredients_ds
         )
-        ingredients_schema = _add_missing_properties(
-            self.client,
-            self.ingredients_ds,
-            self.client.data_sources.retrieve(data_source_id=self.ingredients_ds),
-            fixture["ingredients"]["properties"],
-        )
+        self._backfill(recipes_schema, ingredients_schema)
         return Vocabulary(
             ingredients={name: pid for name, pid in ingredients.items() if name},
             cuisines=_options(recipes_schema, "Cuisine"),
             meals=_options(recipes_schema, "Meal"),
             categories=_options(ingredients_schema, "Category"),
         )
+
+    # ponytail: a select property that was missing entirely reports no options
+    # on this one call, because the schema above predates the backfill. The next
+    # message reads it back in full, so it is not worth a second retrieve.
+    def _backfill(self, recipes_schema: dict, ingredients_schema: dict) -> None:
+        fixture = load_schema_fixture()
+        targets = (
+            (self.recipes_ds, recipes_schema, fixture["recipes"]["properties"]),
+            (self.ingredients_ds, ingredients_schema, fixture["ingredients"]["properties"]),
+        )
+        for data_source_id, schema, properties in targets:
+            missing = _missing_properties(schema, properties)
+            if missing:
+                log.info("adding %s to %s", ", ".join(missing), data_source_id)
+                _apply_properties(self.client, data_source_id, missing)
 
     def find_by_url(self, url: str) -> str | None:
         target = canonical_url(url)
