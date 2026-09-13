@@ -110,3 +110,19 @@ def test_the_model_ids_are_optional_overrides(monkeypatch):
 
     cfg = Config.from_env()
     assert (cfg.model_fast, cfg.model_strong) == ("fast-id", "strong-id")
+
+
+def test_no_secret_value_appears_in_the_config_repr(monkeypatch):
+    set_env(
+        monkeypatch,
+        TELEGRAM_TOKEN="telegram-secret-value",
+        NOTION_TOKEN="notion-secret-value",
+        GEMINI_API_KEY="gemini-secret-value",
+    )
+
+    text = repr(Config.from_env())
+
+    assert "telegram-secret-value" not in text
+    assert "notion-secret-value" not in text
+    assert "gemini-secret-value" not in text
+    assert "ds-recipes" in text
