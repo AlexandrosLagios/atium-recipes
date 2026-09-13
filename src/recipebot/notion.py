@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from difflib import get_close_matches
 from itertools import batched
 from pathlib import Path
@@ -132,6 +133,31 @@ def _rt(text: str) -> list[dict]:
     return [{"type": "text", "text": {"content": _utf16_chunks(text)[0]}}]
 
 
+# A method step names its ingredients exactly as the ingredient list does, so a
+# word-bounded match is enough to link one. Longest name first, because "Dark
+# soy sauce" must win over "Soy sauce" where both are in the list.
+def _linked_rt(text: str, links: dict[str, str]) -> list[dict]:
+    text = _utf16_chunks(text)[0]
+    by_lower = {name.lower(): page_id for name, page_id in links.items() if name.strip()}
+    if not by_lower:
+        return _rt(text)
+    names = sorted(by_lower, key=len, reverse=True)
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in names) + r")\b", re.IGNORECASE)
+    parts: list[dict] = []
+    at = 0
+    for match in pattern.finditer(text):
+        if match.start() > at:
+            parts.append({"type": "text", "text": {"content": text[at : match.start()]}})
+        url = "https://www.notion.so/" + by_lower[match.group(0).lower()].replace("-", "")
+        parts.append({"type": "text", "text": {"content": match.group(0), "link": {"url": url}}})
+        at = match.end()
+    if not parts:
+        return _rt(text)
+    if at < len(text):
+        parts.append({"type": "text", "text": {"content": text[at:]}})
+    return parts
+
+
 def _block(kind: str, text: str, **extra) -> dict:
     return {"object": "block", "type": kind, kind: {"rich_text": _rt(text), **extra}}
 
@@ -141,7 +167,7 @@ def _paragraphs(text: str) -> list[dict]:
     return [_block("paragraph", chunk) for chunk in chunks[:SOURCE_TEXT_BLOCK_LIMIT]]
 
 
-def _body_blocks(recipe: Recipe) -> list[dict]:
+def _body_blocks(recipe: Recipe, links: dict[str, str] | None = None) -> list[dict]:
     blocks = [_block("heading_2", "Ingredients")]
     group = ""
     for item in recipe.ingredients:
@@ -152,7 +178,14 @@ def _body_blocks(recipe: Recipe) -> list[dict]:
         line = f"{item.quantity} {item.name}".strip()
         blocks.append(_block("bulleted_list_item", line))
     blocks.append(_block("heading_2", "Method"))
-    blocks.extend(_block("numbered_list_item", step) for step in recipe.method)
+    blocks.extend(
+        {
+            "object": "block",
+            "type": "numbered_list_item",
+            "numbered_list_item": {"rich_text": _linked_rt(step, links or {})},
+        }
+        for step in recipe.method
+    )
     blocks.append(_block("heading_2", "Notes"))
     blocks.extend(_block("bulleted_list_item", note) for note in recipe.notes)
     blocks.append(_block("toggle", "Source text", children=_paragraphs(recipe.source_text)))
@@ -364,7 +397,11 @@ class NotionStore:
         return page["id"]
 
     def create_recipe(
-        self, recipe: Recipe, ingredient_page_ids: list[str], vocab: Vocabulary
+        self,
+        recipe: Recipe,
+        ingredient_page_ids: list[str],
+        vocab: Vocabulary,
+        links: dict[str, str] | None = None,
     ) -> str:
         meals = _meal_options(recipe.meal, vocab.meals)
         properties = {
@@ -384,7 +421,7 @@ class NotionStore:
         if recipe.source_url:
             properties["Source URL"] = {"url": recipe.source_url}
 
-        blocks = _body_blocks(recipe)
+        blocks = _body_blocks(recipe, links)
         create_args = {
             "parent": {"type": "data_source_id", "data_source_id": self.recipes_ds},
             "properties": properties,
@@ -414,12 +451,14 @@ class NotionStore:
         plan = reconcile_ingredients(vocab, recipe.ingredients)
         categories = {item.name: item.category for item in recipe.ingredients}
         page_ids = list(plan.existing.values())
+        links = dict(plan.existing)
 
         undecided = list(plan.new)
         for proposed in plan.near:
             target = merges.get(proposed)
             if target and target in vocab.ingredients:
                 page_ids.append(vocab.ingredients[target])
+                links[proposed] = vocab.ingredients[target]
             else:
                 undecided.append(proposed)
 
@@ -431,6 +470,7 @@ class NotionStore:
                     name, categories.get(name, ""), vocab.categories
                 )
             page_ids.append(created[key])
+            links[name] = created[key]
 
-        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)), vocab)
+        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)), vocab, links)
         return url, True

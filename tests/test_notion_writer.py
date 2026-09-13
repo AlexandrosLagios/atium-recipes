@@ -144,6 +144,44 @@ def test_body_carries_the_three_headings_and_a_collapsed_source_toggle():
     assert toggle["toggle"]["children"][0]["paragraph"]["rich_text"][0]["text"]["content"] == "raw body"
 
 
+def test_a_method_step_links_each_ingredient_it_names():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+    recipe = a_recipe(method=["Whisk the dark soy sauce into the soy sauce."])
+    links = {"Soy sauce": "aaaa-bbbb", "Dark soy sauce": "cccc-dddd"}
+
+    store.create_recipe(recipe, ["p2"], VOCAB, links)
+
+    step = next(
+        b for b in client.pages.created[0]["children"] if b["type"] == "numbered_list_item"
+    )
+    parts = [
+        (rt["text"]["content"], rt["text"].get("link", {}).get("url", ""))
+        for rt in step["numbered_list_item"]["rich_text"]
+    ]
+    assert parts == [
+        ("Whisk the ", ""),
+        ("dark soy sauce", "https://www.notion.so/ccccdddd"),
+        (" into the ", ""),
+        ("soy sauce", "https://www.notion.so/aaaabbbb"),
+        (".", ""),
+    ]
+
+
+def test_a_method_step_with_no_named_ingredient_stays_one_plain_run():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(method=["Rest overnight."]), ["p2"], VOCAB, {"Soy sauce": "x"})
+
+    step = next(
+        b for b in client.pages.created[0]["children"] if b["type"] == "numbered_list_item"
+    )
+    assert step["numbered_list_item"]["rich_text"] == [
+        {"type": "text", "text": {"content": "Rest overnight."}}
+    ]
+
+
 def test_an_ingredient_group_becomes_a_subheading_above_its_bullets():
     client = FakeClient()
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
