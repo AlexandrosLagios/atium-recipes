@@ -131,7 +131,7 @@ def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
     lines = [
         recipe.name,
         f"{recipe.cuisine} | {', '.join(recipe.meal)} | {recipe.difficulty}",
-        f"{recipe.time_min} min | {recipe.servings} servings",
+        f"{recipe.time_min} min | {recipe.servings} servings" + (f" | keeps {recipe.keeps_days}d" if recipe.keeps_days else ""),
         "",
         "Ingredients: " + ", ".join(item.name for item in recipe.ingredients),
         f"Method: {len(recipe.method)} steps",

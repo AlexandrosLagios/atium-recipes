@@ -63,6 +63,7 @@ class ExtractedRecipe(BaseModel):
     meal: list[str]
     difficulty: Literal["Easy", "Hard"]
     time_min: int
+    keeps_days: int = 0
     servings: int
     ingredients: list[Ingredient]
     method: list[str]

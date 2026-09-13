@@ -134,6 +134,14 @@
         },
         "type": "select"
       },
+      "Keeps (days)": {
+        "description": null,
+        "name": "Keeps (days)",
+        "number": {
+          "format": "number"
+        },
+        "type": "number"
+      },
       "Meal": {
         "description": null,
         "multi_select": {

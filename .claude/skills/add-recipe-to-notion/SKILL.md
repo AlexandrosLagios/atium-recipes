@@ -56,6 +56,9 @@ lists and property names can drift):
      multi-select options only. If nothing fits well, choose the closest
      existing option rather than adding a new one, and say so in your report.
    - `Difficulty` (`Easy` or `Hard`), `Time (min)`, `Servings`
+   - `Keeps (days)`: how long the cooked dish keeps in the fridge. Use the
+     figure the source states, otherwise estimate it. Leave it empty when the
+     dish has to be eaten straight away.
    - `Ingredients`: the relation array of every matched/created Ingredient
      page URL from step 3
 

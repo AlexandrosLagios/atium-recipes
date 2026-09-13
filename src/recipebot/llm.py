@@ -13,6 +13,7 @@ Rules you must follow:
 - Choose cuisine, meal, and ingredient category values from the known options below whenever one fits. A value must never contain a comma.
 - time_min is the total time in minutes including resting, marinating, and chilling. An overnight rest is at least 480 minutes.
 - Write in English. Where a Greek or other non-English ingredient has no honest English equivalent, keep the transliterated term and add a gloss, for example "Anthotyro (Greek whey cheese)". Never substitute an approximate name.
+- keeps_days is how many days the cooked dish keeps in the fridge. Use the figure the recipe states, otherwise estimate it from the ingredients. Use 0 when the dish has to be eaten straight away.
 - difficulty is "Easy" unless the recipe needs a technique a home cook would have to practise, in which case it is "Hard".
 - Method steps are whole sentences in order.
 - emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits.

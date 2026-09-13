@@ -94,8 +94,18 @@ def test_create_recipe_writes_the_canonical_url_and_the_cover():
     assert props["Meal"]["multi_select"] == [{"name": "Side"}]
     assert props["Ingredients"]["relation"] == [{"id": "p2"}]
     assert "Rating" not in props
+    assert "Keeps (days)" not in props
     assert "Missing" not in props
     assert "Missing count" not in props
+
+
+def test_create_recipe_writes_the_fridge_life_when_the_model_gave_one():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(keeps_days=5), [], VOCAB)
+
+    assert client.pages.created[0]["properties"]["Keeps (days)"]["number"] == 5
 
 
 def test_create_recipe_omits_the_url_and_the_cover_when_absent():

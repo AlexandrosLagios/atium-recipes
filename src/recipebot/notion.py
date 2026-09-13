@@ -320,6 +320,8 @@ class NotionStore:
         cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
         if cuisine:
             properties["Cuisine"] = {"select": {"name": cuisine}}
+        if recipe.keeps_days:
+            properties["Keeps (days)"] = {"number": recipe.keeps_days}
         if recipe.source_url:
             properties["Source URL"] = {"url": recipe.source_url}
 
