@@ -101,4 +101,16 @@ class GeminiBackend:
 
 
 def backend_from_config(cfg: Config) -> Backend:
-    return AnthropicBackend(anthropic.Anthropic(api_key=cfg.anthropic_key))
+    if cfg.llm_provider == "gemini":
+        return GeminiBackend(
+            genai.Client(api_key=cfg.llm_api_key),
+            fast=cfg.model_fast or GEMINI_FAST,
+            strong=cfg.model_strong or GEMINI_STRONG,
+        )
+    if cfg.llm_provider == "anthropic":
+        return AnthropicBackend(
+            anthropic.Anthropic(api_key=cfg.llm_api_key),
+            fast=cfg.model_fast or ANTHROPIC_FAST,
+            strong=cfg.model_strong or ANTHROPIC_STRONG,
+        )
+    raise RuntimeError(f"unknown LLM provider: {cfg.llm_provider!r}")

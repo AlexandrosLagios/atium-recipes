@@ -1,6 +1,7 @@
 import base64
 
 import anthropic
+import pytest
 from google.genai import errors
 
 from recipebot.backends import (
@@ -10,7 +11,9 @@ from recipebot.backends import (
     GEMINI_STRONG,
     AnthropicBackend,
     GeminiBackend,
+    backend_from_config,
 )
+from recipebot.config import Config
 from recipebot.llm import image_block, text_block
 from recipebot.models import ExtractedRecipe, Ingredient
 
@@ -222,3 +225,47 @@ def test_gemini_owns_its_sdk_error_type():
     assert GeminiBackend.api_error == (errors.APIError,)
     assert issubclass(errors.ClientError, errors.APIError)
     assert issubclass(errors.ServerError, errors.APIError)
+
+
+def config(**overrides) -> Config:
+    fields = {
+        "telegram_token": "tok",
+        "allowed_user_id": 1,
+        "notion_token": "ntn",
+        "recipes_ds": "ds-r",
+        "ingredients_ds": "ds-i",
+        "llm_provider": "gemini",
+        "llm_api_key": "key",
+    }
+    return Config(**{**fields, **overrides})
+
+
+def test_backend_from_config_builds_gemini_with_its_defaults():
+    backend = backend_from_config(config())
+
+    assert isinstance(backend, GeminiBackend)
+    assert (backend.fast, backend.strong) == (GEMINI_FAST, GEMINI_STRONG)
+
+
+def test_backend_from_config_builds_anthropic_with_its_defaults():
+    backend = backend_from_config(config(llm_provider="anthropic"))
+
+    assert isinstance(backend, AnthropicBackend)
+    assert (backend.fast, backend.strong) == (ANTHROPIC_FAST, ANTHROPIC_STRONG)
+
+
+def test_backend_from_config_applies_the_model_overrides():
+    backend = backend_from_config(config(model_fast="f", model_strong="s"))
+
+    assert (backend.fast, backend.strong) == ("f", "s")
+
+    backend = backend_from_config(
+        config(llm_provider="anthropic", model_fast="f", model_strong="s")
+    )
+
+    assert (backend.fast, backend.strong) == ("f", "s")
+
+
+def test_backend_from_config_refuses_an_unknown_provider():
+    with pytest.raises(RuntimeError, match="ollama"):
+        backend_from_config(config(llm_provider="ollama"))
