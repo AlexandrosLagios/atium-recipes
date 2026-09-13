@@ -55,6 +55,7 @@ class Ingredient(BaseModel):
     name: str
     quantity: str = ""
     category: str = ""
+    group: str = ""
 
 
 class ExtractedRecipe(BaseModel):
