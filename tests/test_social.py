@@ -143,3 +143,19 @@ def test_fetch_social_reads_images_capped_at_max_frames_when_there_is_no_video(
 
     assert result.caption == "Photo carousel recipe"
     assert result.frames == [b"photo1.jpg", b"photo2.jpg"]
+
+
+def test_a_missing_ffmpeg_binary_is_not_blocking(tmp_path, monkeypatch):
+    info = {"description": "Best noodles", "thumbnail": "https://cdn/t.jpg"}
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL(info, tmp_path))
+
+    def no_ffmpeg(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory: 'ffmpeg'")
+
+    monkeypatch.setattr(social.subprocess, "run", no_ffmpeg)
+
+    result = fetch_social("https://www.instagram.com/p/abc/", tmp_path)
+
+    assert result.frames == []
+    assert result.caption == "Best noodles"
+    assert result.thumbnail_url == "https://cdn/t.jpg"

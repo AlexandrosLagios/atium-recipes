@@ -58,7 +58,9 @@ def fetch_social(url: str, workdir: Path, *, max_frames: int = 4) -> SocialResul
     if videos:
         try:
             result.frames = keyframes(videos[0], workdir, max_frames)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            # OSError covers the binary being absent entirely, which is what a
+            # host without ffmpeg raises. The caption alone is still worth having.
             log.warning("ffmpeg failed on %s: %s", url, exc)
         return result
 
