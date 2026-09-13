@@ -4,6 +4,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
+from notion_client.errors import APIResponseError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -16,12 +17,14 @@ from telegram.ext import (
     filters,
 )
 
+from . import callback_server, oauth
 from .config import Config
 from .extract import from_photo, from_text, from_url
 from .llm import Extractor
 from .models import Recipe
 from .notion import IngredientPlan, NotionStore, Vocabulary, reconcile_ingredients
 from .social import SocialBlocked
+from .users import UserRecord
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +42,12 @@ PREVIEWS: dict[str, "Preview"] = {}
 
 EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
 
+CONNECT_MESSAGE = "Connect your Notion account to save recipes there."
+
+
+def connect_markup(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Connect Notion", url=url)]])
+
 
 @dataclass
 class Preview:
@@ -52,14 +61,14 @@ def first_url(text: str) -> str:
     return match.group() if match else ""
 
 
-def make_gate(allowed_user_id: int):
+def make_gate(allowed_user_ids: frozenset[int]):
     async def gate(update, context) -> None:
         seen_id = "unknown"
         try:
             user = getattr(update, "effective_user", None)
             if user is not None:
                 seen_id = user.id
-            allowed = seen_id == allowed_user_id
+            allowed = seen_id in allowed_user_ids
         except Exception:
             allowed = False
         if not allowed:
@@ -69,10 +78,49 @@ def make_gate(allowed_user_id: int):
     return gate
 
 
-async def handle_recipe(recipe: Recipe, store, vocab, update) -> None:
+async def call_with_reconnect(chat_id: int, context, fn):
+    """Run fn(store) in a thread. On a revoked connection (401), refresh the
+    token once and retry; a second failure drops the row, so the next
+    message from this chat offers Connect again."""
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    record = users.get(chat_id)
+    if record is None:
+        raise LookupError(chat_id)
+    try:
+        return await asyncio.to_thread(fn, NotionStore.from_user(record))
+    except APIResponseError as exc:
+        if exc.status != 401 or not record.notion_refresh_token:
+            if exc.status == 401:
+                users.delete(chat_id)
+            raise
+        tokens = await asyncio.to_thread(
+            oauth.refresh_access_token, cfg.notion_client_id, cfg.notion_client_secret, record.notion_refresh_token
+        )
+        record = UserRecord(
+            telegram_user_id=record.telegram_user_id,
+            notion_access_token=tokens.access_token,
+            notion_refresh_token=tokens.refresh_token,
+            recipes_ds=record.recipes_ds,
+            ingredients_ds=record.ingredients_ds,
+            workspace_name=record.workspace_name,
+            connected_at=record.connected_at,
+        )
+        users.save(record)
+        try:
+            return await asyncio.to_thread(fn, NotionStore.from_user(record))
+        except APIResponseError as exc2:
+            if exc2.status == 401:
+                users.delete(chat_id)
+            raise
+
+
+async def handle_recipe(recipe: Recipe, chat_id: int, context, vocab, update) -> None:
     plan = reconcile_ingredients(vocab, recipe.ingredients)
     if recipe.high_confidence and not plan.near:
-        url, created = await asyncio.to_thread(store.save_recipe, recipe, vocab)
+        url, created = await call_with_reconnect(
+            chat_id, context, lambda store: store.save_recipe(recipe, vocab)
+        )
         message = f"Saved: {url}" if created else f"Already saved: {url}"
         await update.message.reply_text(message)
         return
@@ -126,11 +174,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     merges = preview.merges if action == "merge" else {}
-    store = context.bot_data["store"]
+    chat_id = update.effective_user.id
     try:
-        url, created = await asyncio.to_thread(
-            store.save_recipe, preview.recipe, preview.vocab, merges
+        url, created = await call_with_reconnect(
+            chat_id, context, lambda store: store.save_recipe(preview.recipe, preview.vocab, merges)
         )
+    except LookupError:
+        url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
+        await query.edit_message_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
+        return
     except Exception:
         PREVIEWS[token] = preview
         log.exception("save_recipe failed for token %s", token)
@@ -143,17 +195,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await query.edit_message_text(message)
 
 
-async def _deliver(recipe_or_none, store, vocab, update) -> None:
+async def _deliver(recipe_or_none, chat_id: int, context, vocab, update) -> None:
     if recipe_or_none is None:
         await update.message.reply_text(NO_RECIPE_MESSAGE)
         return
-    await handle_recipe(recipe_or_none, store, vocab, update)
+    await handle_recipe(recipe_or_none, chat_id, context, vocab, update)
+
+
+async def send_connect_button(update, context) -> None:
+    chat_id = update.effective_user.id
+    url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
+    await update.effective_message.reply_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("handler failed", exc_info=context.error)
     user = getattr(update, "effective_user", None)
-    if user is None or user.id != context.bot_data["allowed_user_id"]:
+    if user is None or user.id not in context.bot_data["cfg"].allowed_user_ids:
         return
     message = getattr(update, "effective_message", None)
     if message is not None:
@@ -161,24 +219,32 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    users = context.bot_data["users"]
+    if users.get(update.effective_user.id) is None:
+        await send_connect_button(update, context)
+        return
     await update.message.reply_text(
         "Send me a recipe link, an Instagram or TikTok post, a photo, or pasted text."
     )
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    store = context.bot_data["store"]
+    chat_id = update.effective_user.id
+    users = context.bot_data["users"]
+    if users.get(chat_id) is None:
+        await send_connect_button(update, context)
+        return
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
     url = first_url(text)
 
     if url:
-        existing = await asyncio.to_thread(store.find_by_url, url)
+        existing = await call_with_reconnect(chat_id, context, lambda store: store.find_by_url(url))
         if existing:
             await update.message.reply_text(f"Already saved: {existing}")
             return
 
-    vocab = await asyncio.to_thread(store.vocabulary)
+    vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())
     try:
         if url:
             recipe = await asyncio.to_thread(from_url, url, extractor, vocab)
@@ -188,18 +254,22 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(BLOCKED_MESSAGE)
         return
 
-    await _deliver(recipe, store, vocab, update)
+    await _deliver(recipe, chat_id, context, vocab, update)
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    store = context.bot_data["store"]
+    chat_id = update.effective_user.id
+    users = context.bot_data["users"]
+    if users.get(chat_id) is None:
+        await send_connect_button(update, context)
+        return
     extractor = context.bot_data["extractor"]
 
     photo = update.message.photo[-1]
     telegram_file = await context.bot.get_file(photo.file_id)
     data = bytes(await telegram_file.download_as_bytearray())
 
-    vocab = await asyncio.to_thread(store.vocabulary)
+    vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())
     recipe = await asyncio.to_thread(
         from_photo,
         [(data, "image/jpeg")],
@@ -207,20 +277,29 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         vocab,
         caption=update.message.caption or "",
     )
-    await _deliver(recipe, store, vocab, update)
+    await _deliver(recipe, chat_id, context, vocab, update)
 
 
-def build_application(cfg: Config, store: NotionStore, extractor: Extractor) -> Application:
-    application = Application.builder().token(cfg.telegram_token).build()
-    application.bot_data["store"] = store
+async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.bot_data["users"].delete(update.effective_user.id)
+    await update.message.reply_text("Disconnected. Send me a message to connect a Notion account again.")
+
+
+def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:
+    builder = Application.builder().token(cfg.telegram_token)
+    if post_init is not None:
+        builder = builder.post_init(post_init)
+    application = builder.build()
+    application.bot_data["cfg"] = cfg
+    application.bot_data["users"] = users
     application.bot_data["extractor"] = extractor
-    application.bot_data["allowed_user_id"] = cfg.allowed_user_id
 
     application.add_handler(
-        TypeHandler(Update, make_gate(cfg.allowed_user_id), block=True), group=-1
+        TypeHandler(Update, make_gate(cfg.allowed_user_ids), block=True), group=-1
     )
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
+    application.add_handler(CommandHandler("disconnect", on_disconnect))
     application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.PHOTO, on_photo))
     application.add_handler(

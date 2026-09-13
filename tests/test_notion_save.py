@@ -1,5 +1,7 @@
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import NotionStore, Vocabulary
+from recipebot.notion import create_user_databases, load_schema_fixture
+from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(
     ingredients={"Chicken": "p1", "Soy sauce": "p3"},
@@ -155,3 +157,139 @@ def test_save_recipe_dedupes_by_source_url_and_creates_nothing():
     assert created is False
     assert url == "https://notion.so/existing"
     assert client.pages.created == []
+
+
+FIXTURE = {
+    "recipes": {"properties": {"Name": {"type": "title", "title": {}}}},
+    "ingredients": {
+        "properties": {
+            "Name": {"type": "title", "title": {}},
+            "Used in": {"type": "rollup", "rollup": {"relation_property_name": "Recipes", "rollup_property_name": "Name", "function": "count"}},
+        }
+    },
+}
+
+
+class FakeChildrenList:
+    def __init__(self, existing_blocks):
+        self.existing_blocks = existing_blocks
+
+    def list(self, block_id, **kwargs):
+        return {"results": self.existing_blocks, "has_more": False, "next_cursor": None}
+
+
+class FakeDatabases:
+    def __init__(self):
+        self.created = []
+        self._by_id = {}
+
+    def create(self, **kwargs):
+        db_id = f"db{len(self.created) + 1}"
+        ds_id = f"ds{len(self.created) + 1}"
+        self.created.append(kwargs)
+        self._by_id[db_id] = ds_id
+        return {"id": db_id, "data_sources": [{"id": ds_id}]}
+
+    def retrieve(self, database_id):
+        return {"id": database_id, "data_sources": [{"id": self._by_id[database_id]}]}
+
+
+class FakeDataSourcesForSchema:
+    def __init__(self, reciprocal_schema):
+        self.reciprocal_schema = reciprocal_schema
+        self.updated = []
+
+    def retrieve(self, data_source_id):
+        return self.reciprocal_schema
+
+    def update(self, **kwargs):
+        self.updated.append(kwargs)
+
+
+class FakeSchemaClient:
+    def __init__(self, existing_blocks=(), reciprocal_schema=None):
+        self.blocks = type("B", (), {"children": FakeChildrenList(list(existing_blocks))})()
+        self.databases = FakeDatabases()
+        self.data_sources = FakeDataSourcesForSchema(reciprocal_schema or {"properties": {}})
+
+
+def test_load_schema_fixture_reads_the_shipped_file():
+    fixture = load_schema_fixture()
+
+    assert "Name" in fixture["recipes"]["properties"]
+    assert "Name" in fixture["ingredients"]["properties"]
+
+
+def test_create_user_databases_creates_both_from_the_fixture():
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(reciprocal_schema=reciprocal_schema)
+
+    recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
+
+    assert recipes_ds == "ds2"
+    assert ingredients_ds == "ds1"
+    titles = [call["title"][0]["text"]["content"] for call in client.databases.created]
+    assert titles == ["Ingredients", "Recipes"]
+    # The Recipes call carries a relation pointed at the just-created Ingredients data source.
+    recipes_call = client.databases.created[1]
+    assert recipes_call["initial_data_source"]["properties"]["Ingredients"]["relation"]["data_source_id"] == "ds1"
+
+
+def test_create_user_databases_reuses_an_existing_pair_instead_of_duplicating():
+    existing = [
+        {"type": "child_database", "id": "db1", "child_database": {"title": "Ingredients"}},
+        {"type": "child_database", "id": "db2", "child_database": {"title": "Recipes"}},
+    ]
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(existing_blocks=existing, reciprocal_schema=reciprocal_schema)
+    client.databases._by_id = {"db1": "ds1", "db2": "ds2"}
+
+    recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
+
+    assert (recipes_ds, ingredients_ds) == ("ds2", "ds1")
+    assert client.databases.created == []
+
+
+def test_create_user_databases_rewires_ingredients_even_when_recipes_already_existed():
+    """Covers the gap where a prior call created Recipes but failed before
+    finishing the Ingredients wiring: a retry must still re-apply it, not
+    skip it just because Recipes is now found rather than freshly created."""
+    existing = [
+        {"type": "child_database", "id": "db1", "child_database": {"title": "Ingredients"}},
+        {"type": "child_database", "id": "db2", "child_database": {"title": "Recipes"}},
+    ]
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(existing_blocks=existing, reciprocal_schema=reciprocal_schema)
+    client.databases._by_id = {"db1": "ds1", "db2": "ds2"}
+
+    recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
+
+    assert (recipes_ds, ingredients_ds) == ("ds2", "ds1")
+    assert client.databases.created == []
+    assert len(client.data_sources.updated) == 1
+    update_call = client.data_sources.updated[0]
+    assert update_call["data_source_id"] == "ds1"
+    assert update_call["properties"]["Used in"] == FIXTURE["ingredients"]["properties"]["Used in"]
+
+
+def test_from_user_builds_a_store_from_a_user_record():
+    record = UserRecord(
+        telegram_user_id=1,
+        notion_access_token="tok-1",
+        notion_refresh_token="refresh-1",
+        recipes_ds="ds-r",
+        ingredients_ds="ds-i",
+        workspace_name="Alex's Kitchen",
+        connected_at=1,
+    )
+
+    store = NotionStore.from_user(record)
+
+    assert store.recipes_ds == "ds-r"
+    assert store.ingredients_ds == "ds-i"

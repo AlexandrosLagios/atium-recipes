@@ -1,14 +1,21 @@
+import json
 import logging
 from difflib import get_close_matches
 from itertools import batched
+from pathlib import Path
 
 from notion_client import Client
 from pydantic import BaseModel
 
-from .config import Config
 from .models import Ingredient, Recipe, canonical_url
 
 log = logging.getLogger(__name__)
+
+SCHEMA_FIXTURE_PATH = Path(__file__).parent / "notion_schema.json"
+
+
+def load_schema_fixture() -> dict:
+    return json.loads(SCHEMA_FIXTURE_PATH.read_text())
 
 
 class Vocabulary(BaseModel):
@@ -131,6 +138,89 @@ def _body_blocks(recipe: Recipe) -> list[dict]:
     return blocks
 
 
+def _find_existing_data_source(client, parent_page_id: str, title: str) -> str | None:
+    cursor = None
+    while True:
+        kwargs = {"block_id": parent_page_id}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        page = client.blocks.children.list(**kwargs)
+        for block in page["results"]:
+            if block.get("type") == "child_database" and block["child_database"]["title"] == title:
+                db = client.databases.retrieve(database_id=block["id"])
+                return db["data_sources"][0]["id"]
+        cursor = page.get("next_cursor")
+        if not page.get("has_more") or not cursor:
+            return None
+
+
+def _create_data_source(client, parent_page_id: str, title: str, properties: dict) -> str:
+    db = client.databases.create(
+        parent={"type": "page_id", "page_id": parent_page_id},
+        title=[{"type": "text", "text": {"content": title}}],
+        initial_data_source={"properties": properties},
+    )
+    return db["data_sources"][0]["id"]
+
+
+# A rollup or formula property can reference a relation that does not exist
+# yet at creation time (the reciprocal relation between Recipes and
+# Ingredients is only wired up after both are created), so it is excluded
+# from the create payload and added later via a data_sources.update call.
+def _creatable(properties: dict) -> dict:
+    return {name: config for name, config in properties.items() if config.get("type") not in ("rollup", "formula")}
+
+
+def _computed(properties: dict) -> dict:
+    return {name: config for name, config in properties.items() if config.get("type") in ("rollup", "formula")}
+
+
+def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) -> str:
+    schema = client.data_sources.retrieve(data_source_id=ingredients_ds)
+    for name, config in schema["properties"].items():
+        if config.get("type") == "relation" and config["relation"].get("data_source_id") == recipes_ds:
+            return name
+    raise RuntimeError("Notion did not create the reciprocal relation on Ingredients")
+
+
+def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[str, str]:
+    """Create this user's Recipes/Ingredients pair under the page they
+    shared during OAuth, matching the maintainer's schema fixture. Reuses
+    an existing pair instead of duplicating it, so a retry after a partial
+    failure is safe."""
+    ingredients_ds = _find_existing_data_source(
+        client, parent_page_id, "Ingredients"
+    ) or _create_data_source(
+        client, parent_page_id, "Ingredients", _creatable(fixture["ingredients"]["properties"])
+    )
+
+    recipes_ds = _find_existing_data_source(client, parent_page_id, "Recipes")
+    if recipes_ds is None:
+        properties = _creatable(fixture["recipes"]["properties"])
+        properties["Ingredients"] = {
+            "type": "relation",
+            "relation": {"data_source_id": ingredients_ds, "type": "dual_property", "dual_property": {}},
+        }
+        recipes_ds = _create_data_source(client, parent_page_id, "Recipes", properties)
+
+    # Re-run every call, not just on first creation: a retry after a failure
+    # between creating Recipes and finishing this wiring would otherwise find
+    # Recipes already there and skip the rename/rollup permanently. Notion's
+    # update is idempotent here, so repeating it on an already-wired pair is
+    # harmless.
+    reciprocal = _reciprocal_relation_property(client, ingredients_ds, recipes_ds)
+    ingredient_updates = _computed(fixture["ingredients"]["properties"])
+    if reciprocal != "Recipes":
+        ingredient_updates[reciprocal] = {"name": "Recipes"}
+    client.data_sources.update(data_source_id=ingredients_ds, properties=ingredient_updates)
+
+    recipe_updates = _computed(fixture["recipes"]["properties"])
+    if recipe_updates:
+        client.data_sources.update(data_source_id=recipes_ds, properties=recipe_updates)
+
+    return recipes_ds, ingredients_ds
+
+
 class NotionStore:
     def __init__(self, client, recipes_ds: str, ingredients_ds: str):
         self.client = client
@@ -138,8 +228,8 @@ class NotionStore:
         self.ingredients_ds = ingredients_ds
 
     @classmethod
-    def from_config(cls, cfg: Config) -> "NotionStore":
-        return cls(Client(auth=cfg.notion_token), cfg.recipes_ds, cfg.ingredients_ds)
+    def from_user(cls, record) -> "NotionStore":
+        return cls(Client(auth=record.notion_access_token), record.recipes_ds, record.ingredients_ds)
 
     def _all_pages(self, data_source_id: str, **kwargs) -> list[dict]:
         pages, cursor = [], None

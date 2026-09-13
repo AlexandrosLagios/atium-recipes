@@ -4,17 +4,25 @@ Sync recipes from URLs, Instagram, and other sources into a Notion database.
 
 ## Running the bot
 
-1. Copy `.env.example` to `.env` and fill in the secrets
-   (`TELEGRAM_TOKEN`, `NOTION_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, and the
-   model provider's API key), and the two Notion data source IDs
-   (`NOTION_RECIPES_DS`, `NOTION_INGREDIENTS_DS`).
-2. Share the Notion integration with the Kitchen page so it can reach the
-   Recipes and Ingredients data sources.
-3. Start the bot: `docker compose up -d --build`.
+1. Copy `.env.example` to `.env` and fill in `TELEGRAM_TOKEN`,
+   `TELEGRAM_ALLOWED_USER_IDS` (a comma-separated list of Telegram user
+   IDs), `NOTION_CLIENT_ID`/`NOTION_CLIENT_SECRET`/`NOTION_REDIRECT_URI`
+   (from a Notion public integration, install scope "Selected workspaces
+   only"), and the model provider's API key.
+2. Start the bot: `docker compose up -d --build`.
+3. Each allowed friend messages the bot and taps **Connect Notion**. The bot
+   creates a Recipes and an Ingredients database under whatever page they
+   share, and confirms in Telegram once it is done.
 
-The bot uses long polling, so the container opens no inbound port on the
-host. It answers only the Telegram user whose ID is set in
-`TELEGRAM_ALLOWED_USER_ID`; every other user is ignored.
+The bot uses Telegram long polling, so it opens no inbound port for
+Telegram traffic. It does open one local port for the Notion OAuth
+callback, proxied over HTTPS by the VPS's shared reverse proxy; see
+[.claude/skills/vps-connection/SKILL.md](.claude/skills/vps-connection/SKILL.md).
+It answers only a Telegram user whose ID is in `TELEGRAM_ALLOWED_USER_IDS`;
+every other user is ignored before any of their messages are read. Send
+`/disconnect` to remove your stored Notion connection at any point. Each
+connected user's Notion access and refresh tokens are stored in a SQLite
+file on the `recipebot-data` volume.
 
 ## Choosing a model provider
 

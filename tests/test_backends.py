@@ -236,10 +236,12 @@ def test_gemini_owns_its_sdk_error_type():
 def config(**overrides) -> Config:
     fields = {
         "telegram_token": "tok",
-        "allowed_user_id": 1,
-        "notion_token": "ntn",
-        "recipes_ds": "ds-r",
-        "ingredients_ds": "ds-i",
+        "allowed_user_ids": frozenset({1}),
+        "notion_client_id": "c",
+        "notion_client_secret": "s",
+        "notion_redirect_uri": "https://bot.example/oauth/callback",
+        "oauth_callback_port": 8080,
+        "db_path": ":memory:",
         "llm_provider": "gemini",
         "llm_api_key": "key",
     }

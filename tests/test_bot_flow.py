@@ -1,15 +1,63 @@
+import asyncio
 import datetime as dt
 from unittest.mock import AsyncMock
 
+import pytest
 from telegram import Chat, Message, PhotoSize, Update
 from telegram.ext import filters
 
 from recipebot import bot
+from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import Vocabulary
 from recipebot.social import SocialBlocked
+from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(ingredients={"Chicken": "p1"}, cuisines=[], meals=[], categories=[])
+
+
+def a_user_record(**overrides) -> UserRecord:
+    defaults = dict(
+        telegram_user_id=1,
+        notion_access_token="tok-1",
+        notion_refresh_token="refresh-1",
+        recipes_ds="ds-r",
+        ingredients_ds="ds-i",
+        workspace_name="Kitchen",
+        connected_at=1,
+    )
+    return UserRecord(**{**defaults, **overrides})
+
+
+class FakeUsers:
+    def __init__(self, record=None):
+        self.record = record
+        self.deleted = []
+
+    def get(self, telegram_user_id):
+        return self.record
+
+    def save(self, record):
+        self.record = record
+
+    def delete(self, telegram_user_id):
+        self.deleted.append(telegram_user_id)
+        self.record = None
+
+
+def a_config(**overrides) -> Config:
+    fields = dict(
+        telegram_token="123:abc",
+        allowed_user_ids=frozenset({1}),
+        notion_client_id="c",
+        notion_client_secret="s",
+        notion_redirect_uri="https://bot.example/oauth/callback",
+        oauth_callback_port=8080,
+        db_path=":memory:",
+        llm_provider="gemini",
+        llm_api_key="g-key",
+    )
+    return Config(**{**fields, **overrides})
 
 
 def a_recipe(**overrides) -> Recipe:
@@ -59,9 +107,22 @@ def make_update(text=None, photo=None):
 
 def make_context(store, extractor):
     context = type("C", (), {})()
-    context.bot_data = {"store": store, "extractor": extractor}
+    context.bot_data = {
+        "cfg": a_config(),
+        "users": FakeUsers(a_user_record()),
+        "extractor": extractor,
+        "_store": store,
+    }
     context.bot = type("B", (), {"get_file": AsyncMock()})()
     return context
+
+
+@pytest.fixture(autouse=True)
+def route_to_the_fake_store(monkeypatch):
+    async def fake_call_with_reconnect(chat_id, context, fn):
+        return await asyncio.to_thread(fn, context.bot_data["_store"])
+
+    monkeypatch.setattr(bot, "call_with_reconnect", fake_call_with_reconnect)
 
 
 def test_first_url_finds_the_link_inside_a_shared_message():
@@ -166,7 +227,12 @@ def make_photo_context(store, extractor, data=b"\xff\xd8\xff"):
     telegram_file = type("F", (), {})()
     telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(data))
     context = type("C", (), {})()
-    context.bot_data = {"store": store, "extractor": extractor}
+    context.bot_data = {
+        "cfg": a_config(),
+        "users": FakeUsers(a_user_record()),
+        "extractor": extractor,
+        "_store": store,
+    }
     context.bot = type("B", (), {"get_file": AsyncMock(return_value=telegram_file)})()
     return context
 
@@ -199,7 +265,6 @@ async def test_a_photo_with_no_recipe_says_so(monkeypatch):
 async def test_on_error_replies_to_the_allowed_user():
     update = make_update(text="hi")
     context = make_context(FakeStore(), object())
-    context.bot_data["allowed_user_id"] = 1
     context.error = RuntimeError("boom")
 
     await bot.on_error(update, context)
@@ -211,7 +276,6 @@ async def test_on_error_stays_silent_for_a_foreign_user():
     update = make_update(text="hi")
     update.effective_user = type("User", (), {"id": 999})()
     context = make_context(FakeStore(), object())
-    context.bot_data["allowed_user_id"] = 1
     context.error = RuntimeError("boom")
 
     await bot.on_error(update, context)
@@ -258,3 +322,52 @@ def test_an_edited_text_message_matches_neither_handler_filter():
 
     assert not PHOTO_HANDLER_FILTER.check_update(update)
     assert not TEXT_HANDLER_FILTER.check_update(update)
+
+
+async def test_start_shows_the_connect_button_when_not_connected(monkeypatch):
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    update = make_update(text="/start")
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(None)
+
+    await bot.on_start(update, context)
+
+    call = update.message.reply_text.call_args
+    assert bot.CONNECT_MESSAGE in call[0][0]
+    buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons[0].url == "https://notion.example/authorize"
+
+
+async def test_start_gives_the_usual_greeting_when_connected():
+    update = make_update(text="/start")
+    context = make_context(FakeStore(), object())
+
+    await bot.on_start(update, context)
+
+    assert "recipe" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_a_message_before_connecting_shows_the_connect_button_instead_of_extracting(monkeypatch):
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    called = []
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: called.append(1))
+    update = make_update(text="https://example.com/recipe")
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(None)
+
+    await bot.on_text(update, context)
+
+    assert called == []
+    assert bot.CONNECT_MESSAGE in update.message.reply_text.call_args[0][0]
+
+
+async def test_disconnect_deletes_the_row_and_confirms():
+    update = make_update(text="/disconnect")
+    users = FakeUsers(a_user_record())
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = users
+
+    await bot.on_disconnect(update, context)
+
+    assert users.deleted == [1]
+    assert "disconnect" in update.message.reply_text.call_args[0][0].lower()

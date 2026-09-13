@@ -1,13 +1,61 @@
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from recipebot import bot
+from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
+from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(
     ingredients={"Chicken": "p1", "Soy sauce": "p3"}, cuisines=[], meals=[], categories=[]
 )
+
+
+def a_user_record(**overrides) -> UserRecord:
+    defaults = dict(
+        telegram_user_id=1,
+        notion_access_token="tok-1",
+        notion_refresh_token="refresh-1",
+        recipes_ds="ds-r",
+        ingredients_ds="ds-i",
+        workspace_name="Kitchen",
+        connected_at=1,
+    )
+    return UserRecord(**{**defaults, **overrides})
+
+
+class FakeUsers:
+    def __init__(self, record=None):
+        self.record = record
+        self.deleted = []
+
+    def get(self, telegram_user_id):
+        return self.record
+
+    def save(self, record):
+        self.record = record
+
+    def delete(self, telegram_user_id):
+        self.deleted.append(telegram_user_id)
+        self.record = None
+
+
+def a_config(**overrides) -> Config:
+    fields = dict(
+        telegram_token="123:abc",
+        allowed_user_ids=frozenset({1}),
+        notion_client_id="c",
+        notion_client_secret="s",
+        notion_redirect_uri="https://bot.example/oauth/callback",
+        oauth_callback_port=8080,
+        db_path=":memory:",
+        llm_provider="gemini",
+        llm_api_key="g-key",
+    )
+    return Config(**{**fields, **overrides})
 
 
 def a_recipe(ingredients=None, **overrides) -> Recipe:
@@ -52,8 +100,16 @@ def make_update(data):
 
 def make_context(store):
     context = type("C", (), {})()
-    context.bot_data = {"store": store}
+    context.bot_data = {"cfg": a_config(), "users": FakeUsers(a_user_record()), "_store": store}
     return context
+
+
+@pytest.fixture(autouse=True)
+def route_to_the_fake_store(monkeypatch):
+    async def fake_call_with_reconnect(chat_id, context, fn):
+        return await asyncio.to_thread(fn, context.bot_data["_store"])
+
+    monkeypatch.setattr(bot, "call_with_reconnect", fake_call_with_reconnect)
 
 
 def setup_function():
@@ -189,6 +245,24 @@ async def test_a_save_failure_restores_the_preview_with_a_working_save_button():
     assert "tok" not in bot.PREVIEWS
     assert len(store.saved) == 1
     assert "https://notion.so/new" in retry.callback_query.edit_message_text.call_args[0][0]
+
+
+async def test_a_dropped_connection_shows_the_connect_button_instead_of_a_failure(monkeypatch):
+    async def fake_call_with_reconnect(chat_id, context, fn):
+        raise LookupError(chat_id)
+
+    monkeypatch.setattr(bot, "call_with_reconnect", fake_call_with_reconnect)
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    store = FakeStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    call = update.callback_query.edit_message_text.call_args
+    assert bot.CONNECT_MESSAGE in call[0][0]
+    buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons[0].url == "https://notion.example/authorize"
 
 
 async def test_a_double_tap_on_save_writes_the_recipe_only_once():

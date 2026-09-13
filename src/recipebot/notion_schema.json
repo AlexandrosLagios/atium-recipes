@@ -1,0 +1,297 @@
+{
+  "ingredients": {
+    "properties": {
+      "Category": {
+        "description": null,
+        "name": "Category",
+        "select": {
+          "options": [
+            {
+              "color": "green",
+              "description": null,
+              "name": "Vegetables and aromatics"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Sauces and condiments"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "Spices and seasonings"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Staples"
+            },
+            {
+              "color": "pink",
+              "description": null,
+              "name": "Protein"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Dairy and eggs"
+            }
+          ]
+        },
+        "type": "select"
+      },
+      "In pantry": {
+        "checkbox": {},
+        "description": null,
+        "name": "In pantry",
+        "type": "checkbox"
+      },
+      "Name": {
+        "description": null,
+        "name": "Name",
+        "title": {},
+        "type": "title"
+      },
+      "Used in": {
+        "description": null,
+        "name": "Used in",
+        "rollup": {
+          "function": "count",
+          "relation_property_name": "Recipes",
+          "rollup_property_name": "Name"
+        },
+        "type": "rollup"
+      }
+    }
+  },
+  "recipes": {
+    "properties": {
+      "Cuisine": {
+        "description": null,
+        "name": "Cuisine",
+        "select": {
+          "options": [
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Greek"
+            },
+            {
+              "color": "green",
+              "description": null,
+              "name": "Italian"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "Korean"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Chinese"
+            },
+            {
+              "color": "pink",
+              "description": null,
+              "name": "Japanese"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Thai"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Indian"
+            },
+            {
+              "color": "purple",
+              "description": null,
+              "name": "Mexican"
+            }
+          ]
+        },
+        "type": "select"
+      },
+      "Difficulty": {
+        "description": null,
+        "name": "Difficulty",
+        "select": {
+          "options": [
+            {
+              "color": "green",
+              "description": null,
+              "name": "Easy"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "Hard"
+            }
+          ]
+        },
+        "type": "select"
+      },
+      "Meal": {
+        "description": null,
+        "multi_select": {
+          "options": [
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Breakfast"
+            },
+            {
+              "color": "green",
+              "description": null,
+              "name": "Lunch"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Dinner"
+            },
+            {
+              "color": "purple",
+              "description": null,
+              "name": "Dessert"
+            },
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Snack"
+            },
+            {
+              "color": "gray",
+              "description": null,
+              "name": "Side"
+            }
+          ]
+        },
+        "name": "Meal",
+        "type": "multi_select"
+      },
+      "Missing": {
+        "description": null,
+        "formula": {
+          "expression": "prop(\"Ingredients\").filter(!current.prop(\"In pantry\")).map(current.prop(\"Name\")).join(\", \")"
+        },
+        "name": "Missing",
+        "type": "formula"
+      },
+      "Missing count": {
+        "description": null,
+        "name": "Missing count",
+        "rollup": {
+          "function": "unchecked",
+          "relation_property_name": "Ingredients",
+          "rollup_property_name": "In pantry"
+        },
+        "type": "rollup"
+      },
+      "Name": {
+        "description": null,
+        "name": "Name",
+        "title": {},
+        "type": "title"
+      },
+      "Rating": {
+        "description": null,
+        "name": "Rating",
+        "select": {
+          "options": [
+            {
+              "color": "gray",
+              "description": null,
+              "name": "\u2605"
+            },
+            {
+              "color": "gray",
+              "description": null,
+              "name": "\u2605\u2605"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "\u2605\u2605\u2605"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "\u2605\u2605\u2605\u2605"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "\u2605\u2605\u2605\u2605\u2605"
+            }
+          ]
+        },
+        "type": "select"
+      },
+      "Servings": {
+        "description": null,
+        "name": "Servings",
+        "number": {
+          "format": "number"
+        },
+        "type": "number"
+      },
+      "Source": {
+        "description": null,
+        "name": "Source",
+        "select": {
+          "options": [
+            {
+              "color": "gray",
+              "description": null,
+              "name": "Web"
+            },
+            {
+              "color": "pink",
+              "description": null,
+              "name": "Instagram"
+            },
+            {
+              "color": "default",
+              "description": null,
+              "name": "TikTok"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "YouTube"
+            },
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Photo"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Text"
+            }
+          ]
+        },
+        "type": "select"
+      },
+      "Source URL": {
+        "description": null,
+        "name": "Source URL",
+        "type": "url",
+        "url": {}
+      },
+      "Time (min)": {
+        "description": null,
+        "name": "Time (min)",
+        "number": {
+          "format": "number"
+        },
+        "type": "number"
+      }
+    }
+  }
+}

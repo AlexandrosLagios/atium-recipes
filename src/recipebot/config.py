@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass, field
 
 DEFAULT_PROVIDER = "gemini"
+DEFAULT_OAUTH_CALLBACK_PORT = 8080
+DEFAULT_DB_PATH = "/data/recipebot.db"
 
 PROVIDER_KEYS = {
     "gemini": "GEMINI_API_KEY",
@@ -10,20 +12,36 @@ PROVIDER_KEYS = {
 
 _VARS = [
     "TELEGRAM_TOKEN",
-    "TELEGRAM_ALLOWED_USER_ID",
-    "NOTION_TOKEN",
-    "NOTION_RECIPES_DS",
-    "NOTION_INGREDIENTS_DS",
+    "TELEGRAM_ALLOWED_USER_IDS",
+    "NOTION_CLIENT_ID",
+    "NOTION_CLIENT_SECRET",
+    "NOTION_REDIRECT_URI",
 ]
+
+
+def _parse_allowed_ids(raw: str) -> frozenset[int]:
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.lstrip("-").isdigit() or part.count("-") > 1:
+            raise RuntimeError(f"TELEGRAM_ALLOWED_USER_IDS contains a non-integer id: {part!r}")
+        ids.append(int(part))
+    if not ids:
+        raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS must list at least one Telegram user id")
+    return frozenset(ids)
 
 
 @dataclass(frozen=True)
 class Config:
     telegram_token: str = field(repr=False)
-    allowed_user_id: int
-    notion_token: str = field(repr=False)
-    recipes_ds: str
-    ingredients_ds: str
+    allowed_user_ids: frozenset[int]
+    notion_client_id: str = field(repr=False)
+    notion_client_secret: str = field(repr=False)
+    notion_redirect_uri: str
+    oauth_callback_port: int
+    db_path: str
     llm_provider: str
     llm_api_key: str = field(repr=False)
     model_fast: str = ""
@@ -45,10 +63,12 @@ class Config:
             raise RuntimeError(f"missing environment variables: {', '.join(missing)}")
         return cls(
             telegram_token=os.environ["TELEGRAM_TOKEN"],
-            allowed_user_id=int(os.environ["TELEGRAM_ALLOWED_USER_ID"]),
-            notion_token=os.environ["NOTION_TOKEN"],
-            recipes_ds=os.environ["NOTION_RECIPES_DS"],
-            ingredients_ds=os.environ["NOTION_INGREDIENTS_DS"],
+            allowed_user_ids=_parse_allowed_ids(os.environ["TELEGRAM_ALLOWED_USER_IDS"]),
+            notion_client_id=os.environ["NOTION_CLIENT_ID"],
+            notion_client_secret=os.environ["NOTION_CLIENT_SECRET"],
+            notion_redirect_uri=os.environ["NOTION_REDIRECT_URI"],
+            oauth_callback_port=int(os.environ.get("OAUTH_CALLBACK_PORT", DEFAULT_OAUTH_CALLBACK_PORT)),
+            db_path=os.environ.get("DB_PATH", DEFAULT_DB_PATH),
             llm_provider=provider,
             llm_api_key=os.environ[key_var],
             model_fast=os.environ.get("LLM_MODEL_FAST", ""),

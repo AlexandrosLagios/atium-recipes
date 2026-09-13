@@ -15,20 +15,20 @@ class FakeUpdate:
 
 
 async def test_the_allowed_user_passes_the_gate():
-    gate = make_gate(12345)
+    gate = make_gate(frozenset({12345}))
 
     await gate(FakeUpdate(12345), None)
 
 
 async def test_a_foreign_user_is_stopped():
-    gate = make_gate(12345)
+    gate = make_gate(frozenset({12345}))
 
     with pytest.raises(ApplicationHandlerStop):
         await gate(FakeUpdate(999), None)
 
 
 async def test_an_update_with_no_user_is_stopped():
-    gate = make_gate(12345)
+    gate = make_gate(frozenset({12345}))
 
     with pytest.raises(ApplicationHandlerStop):
         await gate(FakeUpdate(None), None)
@@ -46,7 +46,7 @@ class RaisingUpdate:
 
 
 async def test_a_user_object_that_raises_on_id_access_still_stops_the_update():
-    gate = make_gate(12345)
+    gate = make_gate(frozenset({12345}))
 
     with pytest.raises(ApplicationHandlerStop):
         await gate(RaisingUpdate(), None)
