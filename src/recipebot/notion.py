@@ -5,6 +5,7 @@ from itertools import batched
 from pathlib import Path
 
 from notion_client import Client
+from notion_client.errors import APIResponseError
 from pydantic import BaseModel
 
 from .models import Ingredient, Recipe, canonical_url
@@ -183,6 +184,27 @@ def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) 
     raise RuntimeError("Notion did not create the reciprocal relation on Ingredients")
 
 
+# Notion hands a relation-traversing formula back out on read but refuses to
+# write one in: prop("Ingredients").map(current.prop("Name")) is rejected with
+# "Type error with formula", though the identical expression works when the
+# property is made in the UI. Rollups traverse the same relation fine, and
+# every other 2.0 construct is accepted, so this is specific to a formula that
+# reads a related page. Applying one property per request keeps that single
+# unsettable formula from costing the user every other property and the whole
+# connect. Send them as one request again if Notion ever lifts the limit.
+def _apply_computed(client, data_source_id: str, properties: dict) -> list[str]:
+    skipped = []
+    for name, config in properties.items():
+        try:
+            client.data_sources.update(
+                data_source_id=data_source_id, properties={name: config}
+            )
+        except APIResponseError as exc:
+            log.warning("Notion refused the %r property, leaving it out: %s", name, exc)
+            skipped.append(name)
+    return skipped
+
+
 def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[str, str]:
     """Create this user's Recipes/Ingredients pair under the page they
     shared during OAuth, matching the maintainer's schema fixture. Reuses
@@ -209,14 +231,15 @@ def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[s
     # update is idempotent here, so repeating it on an already-wired pair is
     # harmless.
     reciprocal = _reciprocal_relation_property(client, ingredients_ds, recipes_ds)
-    ingredient_updates = _computed(fixture["ingredients"]["properties"])
     if reciprocal != "Recipes":
-        ingredient_updates[reciprocal] = {"name": "Recipes"}
-    client.data_sources.update(data_source_id=ingredients_ds, properties=ingredient_updates)
+        client.data_sources.update(
+            data_source_id=ingredients_ds, properties={reciprocal: {"name": "Recipes"}}
+        )
 
-    recipe_updates = _computed(fixture["recipes"]["properties"])
-    if recipe_updates:
-        client.data_sources.update(data_source_id=recipes_ds, properties=recipe_updates)
+    skipped = _apply_computed(client, ingredients_ds, _computed(fixture["ingredients"]["properties"]))
+    skipped += _apply_computed(client, recipes_ds, _computed(fixture["recipes"]["properties"]))
+    if skipped:
+        log.warning("built the pair under %s without %s", parent_page_id, ", ".join(skipped))
 
     return recipes_ds, ingredients_ds
 
