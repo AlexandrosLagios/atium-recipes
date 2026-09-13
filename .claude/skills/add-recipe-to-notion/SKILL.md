@@ -52,9 +52,10 @@ lists and property names can drift):
    - `Name`, `Source URL` (stripped, as in step 2), `Source` (`Web`,
      `Instagram`, `TikTok`, `YouTube`, `Photo`, or `Text`, matching the
      source type)
-   - `Cuisine` and `Meal`: pick from the data source's existing select /
-     multi-select options only. If nothing fits well, choose the closest
-     existing option rather than adding a new one, and say so in your report.
+   - `Cuisine`: reuse an existing select option only where it is the dish's
+     own cuisine. Cuisine is an open list, so add a new option rather than
+     filing a dish under a neighbouring country, and say so in your report.
+   - `Meal`: pick from the data source's existing multi-select options only.
    - `Difficulty` (`Easy` or `Hard`), `Time (min)`, `Servings`
    - `Keeps (days)`: how long the cooked dish keeps in the fridge. Use the
      figure the source states, otherwise estimate it. Leave it empty when the
@@ -67,7 +68,7 @@ lists and property names can drift):
      (not the shopping-level names from step 3, which are for the relation)
    - A numbered method
    - A `## Notes` section for substitutions, tips, or dietary swaps mentioned
-     in the source
+     in the source. Omit the heading when the source gives none.
    - A collapsed toggle holding the raw extracted text, for a source that
      turns out to be mis-parsed later:
      ```
