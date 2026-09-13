@@ -322,3 +322,52 @@ def test_an_edited_text_message_matches_neither_handler_filter():
 
     assert not PHOTO_HANDLER_FILTER.check_update(update)
     assert not TEXT_HANDLER_FILTER.check_update(update)
+
+
+async def test_start_shows_the_connect_button_when_not_connected(monkeypatch):
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    update = make_update(text="/start")
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(None)
+
+    await bot.on_start(update, context)
+
+    call = update.message.reply_text.call_args
+    assert bot.CONNECT_MESSAGE in call[0][0]
+    buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons[0].url == "https://notion.example/authorize"
+
+
+async def test_start_gives_the_usual_greeting_when_connected():
+    update = make_update(text="/start")
+    context = make_context(FakeStore(), object())
+
+    await bot.on_start(update, context)
+
+    assert "recipe" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_a_message_before_connecting_shows_the_connect_button_instead_of_extracting(monkeypatch):
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    called = []
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: called.append(1))
+    update = make_update(text="https://example.com/recipe")
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(None)
+
+    await bot.on_text(update, context)
+
+    assert called == []
+    assert bot.CONNECT_MESSAGE in update.message.reply_text.call_args[0][0]
+
+
+async def test_disconnect_deletes_the_row_and_confirms():
+    update = make_update(text="/disconnect")
+    users = FakeUsers(a_user_record())
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = users
+
+    await bot.on_disconnect(update, context)
+
+    assert users.deleted == [1]
+    assert "disconnect" in update.message.reply_text.call_args[0][0].lower()

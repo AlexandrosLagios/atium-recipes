@@ -17,7 +17,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import oauth
+from . import callback_server, oauth
 from .config import Config
 from .extract import from_photo, from_text, from_url
 from .llm import Extractor
@@ -41,6 +41,12 @@ ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a dif
 PREVIEWS: dict[str, "Preview"] = {}
 
 EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
+
+CONNECT_MESSAGE = "Connect your Notion account to save recipes there."
+
+
+def connect_markup(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Connect Notion", url=url)]])
 
 
 @dataclass
@@ -193,7 +199,9 @@ async def _deliver(recipe_or_none, chat_id: int, context, vocab, update) -> None
 
 
 async def send_connect_button(update, context) -> None:
-    raise NotImplementedError("added in Task 8")
+    chat_id = update.effective_user.id
+    url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
+    await update.effective_message.reply_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -207,6 +215,10 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    users = context.bot_data["users"]
+    if users.get(update.effective_user.id) is None:
+        await send_connect_button(update, context)
+        return
     await update.message.reply_text(
         "Send me a recipe link, an Instagram or TikTok post, a photo, or pasted text."
     )
@@ -264,6 +276,11 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _deliver(recipe, chat_id, context, vocab, update)
 
 
+async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.bot_data["users"].delete(update.effective_user.id)
+    await update.message.reply_text("Disconnected. Send me a message to connect a Notion account again.")
+
+
 def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:
     builder = Application.builder().token(cfg.telegram_token)
     if post_init is not None:
@@ -278,6 +295,7 @@ def build_application(cfg: Config, users, extractor: Extractor, *, post_init=Non
     )
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
+    application.add_handler(CommandHandler("disconnect", on_disconnect))
     application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.PHOTO, on_photo))
     application.add_handler(
