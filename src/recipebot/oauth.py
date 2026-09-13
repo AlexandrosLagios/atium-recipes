@@ -73,11 +73,22 @@ def _page_title(page: dict) -> str:
     return "".join(span["plain_text"] for span in spans).strip()
 
 
+_PAGE_PARENT_TYPES = {"workspace", "page_id"}
+
+
 def find_shared_page(client) -> tuple[str, str] | None:
     # Notion does not guarantee a stable order, so this always takes the
-    # first result; the caller tells the user which page it picked.
+    # first result; the caller tells the user which page it picked. A search
+    # with no query also returns every page the integration can see,
+    # including recipe pages nested under this user's own databases after a
+    # reconnect, so only a page whose parent is the workspace or another page
+    # (never a database row) can be the shared root.
     result = client.search(filter={"property": "object", "value": "page"})
-    pages = result.get("results", [])
+    pages = [
+        page
+        for page in result.get("results", [])
+        if page.get("parent", {}).get("type") in _PAGE_PARENT_TYPES
+    ]
     if not pages:
         return None
     page = pages[0]

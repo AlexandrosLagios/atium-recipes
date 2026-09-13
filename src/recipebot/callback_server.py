@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from notion_client import Client
@@ -53,7 +53,7 @@ def _page(message: str) -> bytes:
     return f"<p>{message}</p>".encode()
 
 
-def make_server(cfg, users, fixture: dict, notify) -> HTTPServer:
+def make_server(cfg, users, fixture: dict, notify) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             query = parse_qs(urlsplit(self.path).query)
@@ -81,10 +81,10 @@ def make_server(cfg, users, fixture: dict, notify) -> HTTPServer:
         def log_message(self, format, *args):
             pass  # ponytail: BaseHTTPRequestHandler logs every request to stderr; the app's own logger already covers this.
 
-    return HTTPServer(("127.0.0.1", cfg.oauth_callback_port), Handler)
+    return ThreadingHTTPServer(("0.0.0.0", cfg.oauth_callback_port), Handler)
 
 
-def run_in_background(server: HTTPServer) -> threading.Thread:
+def run_in_background(server: ThreadingHTTPServer) -> threading.Thread:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return thread

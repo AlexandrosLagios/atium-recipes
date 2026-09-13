@@ -11,13 +11,18 @@ from .llm import Extractor
 from .notion import load_schema_fixture
 from .users import UserStore
 
+log = logging.getLogger(__name__)
+
 
 def _build_post_init(cfg, users, fixture):
     async def post_init(application: Application) -> None:
         loop = asyncio.get_running_loop()
 
         def notify(chat_id: int, text: str) -> None:
-            asyncio.run_coroutine_threadsafe(application.bot.send_message(chat_id, text), loop)
+            future = asyncio.run_coroutine_threadsafe(application.bot.send_message(chat_id, text), loop)
+            future.add_done_callback(
+                lambda f: f.exception() and log.error("notify failed for chat %s: %s", chat_id, f.exception())
+            )
 
         server = make_server(cfg, users, fixture, notify)
         run_in_background(server)

@@ -158,9 +158,21 @@ def _create_data_source(client, parent_page_id: str, title: str, properties: dic
     db = client.databases.create(
         parent={"type": "page_id", "page_id": parent_page_id},
         title=[{"type": "text", "text": {"content": title}}],
-        properties=properties,
+        initial_data_source={"properties": properties},
     )
     return db["data_sources"][0]["id"]
+
+
+# A rollup or formula property can reference a relation that does not exist
+# yet at creation time (the reciprocal relation between Recipes and
+# Ingredients is only wired up after both are created), so it is excluded
+# from the create payload and added later via a data_sources.update call.
+def _creatable(properties: dict) -> dict:
+    return {name: config for name, config in properties.items() if config.get("type") not in ("rollup", "formula")}
+
+
+def _computed(properties: dict) -> dict:
+    return {name: config for name, config in properties.items() if config.get("type") in ("rollup", "formula")}
 
 
 def _reciprocal_relation_property(client, ingredients_ds: str, recipes_ds: str) -> str:
@@ -178,11 +190,13 @@ def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[s
     failure is safe."""
     ingredients_ds = _find_existing_data_source(
         client, parent_page_id, "Ingredients"
-    ) or _create_data_source(client, parent_page_id, "Ingredients", fixture["ingredients"]["properties"])
+    ) or _create_data_source(
+        client, parent_page_id, "Ingredients", _creatable(fixture["ingredients"]["properties"])
+    )
 
     recipes_ds = _find_existing_data_source(client, parent_page_id, "Recipes")
     if recipes_ds is None:
-        properties = dict(fixture["recipes"]["properties"])
+        properties = _creatable(fixture["recipes"]["properties"])
         properties["Ingredients"] = {
             "type": "relation",
             "relation": {"data_source_id": ingredients_ds, "type": "dual_property", "dual_property": {}},
@@ -195,10 +209,14 @@ def create_user_databases(client, parent_page_id: str, fixture: dict) -> tuple[s
     # update is idempotent here, so repeating it on an already-wired pair is
     # harmless.
     reciprocal = _reciprocal_relation_property(client, ingredients_ds, recipes_ds)
-    updates = {"Used in": fixture["ingredients"]["properties"]["Used in"]}
+    ingredient_updates = _computed(fixture["ingredients"]["properties"])
     if reciprocal != "Recipes":
-        updates[reciprocal] = {"name": "Recipes"}
-    client.data_sources.update(data_source_id=ingredients_ds, properties=updates)
+        ingredient_updates[reciprocal] = {"name": "Recipes"}
+    client.data_sources.update(data_source_id=ingredients_ds, properties=ingredient_updates)
+
+    recipe_updates = _computed(fixture["recipes"]["properties"])
+    if recipe_updates:
+        client.data_sources.update(data_source_id=recipes_ds, properties=recipe_updates)
 
     return recipes_ds, ingredients_ds
 

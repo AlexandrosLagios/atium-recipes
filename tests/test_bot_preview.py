@@ -247,6 +247,24 @@ async def test_a_save_failure_restores_the_preview_with_a_working_save_button():
     assert "https://notion.so/new" in retry.callback_query.edit_message_text.call_args[0][0]
 
 
+async def test_a_dropped_connection_shows_the_connect_button_instead_of_a_failure(monkeypatch):
+    async def fake_call_with_reconnect(chat_id, context, fn):
+        raise LookupError(chat_id)
+
+    monkeypatch.setattr(bot, "call_with_reconnect", fake_call_with_reconnect)
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    store = FakeStore()
+    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save:tok")
+
+    await bot.on_callback(update, make_context(store))
+
+    call = update.callback_query.edit_message_text.call_args
+    assert bot.CONNECT_MESSAGE in call[0][0]
+    buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons[0].url == "https://notion.example/authorize"
+
+
 async def test_a_double_tap_on_save_writes_the_recipe_only_once():
     store = FakeStore()
     bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})

@@ -10,7 +10,7 @@ from recipebot.oauth import (
 )
 
 
-def test_the_authorize_url_carries_the_state_and_redirect(monkeypatch):
+def test_the_authorize_url_carries_the_state_and_redirect():
     url = build_authorize_url("client-1", "https://bot.example/oauth/callback", "state-1")
 
     assert url.startswith("https://api.notion.com/v1/oauth/authorize?")
@@ -74,9 +74,10 @@ class FakeSearch:
         return {"results": self.pages}
 
 
-def _page(page_id, title):
+def _page(page_id, title, parent_type="workspace"):
     return {
         "id": page_id,
+        "parent": {"type": parent_type},
         "properties": {"title": {"title": [{"plain_text": title}]}},
     }
 
@@ -91,3 +92,11 @@ def test_find_shared_page_returns_none_when_nothing_was_shared():
     client = type("C", (), {"search": FakeSearch([])})()
 
     assert find_shared_page(client) is None
+
+
+def test_find_shared_page_skips_a_recipe_page_even_when_it_sorts_first():
+    recipe_page = _page("p1", "Braise", parent_type="data_source_id")
+    shared_root = _page("p2", "Kitchen", parent_type="workspace")
+    client = type("C", (), {"search": FakeSearch([recipe_page, shared_root])})()
+
+    assert find_shared_page(client) == ("p2", "Kitchen")

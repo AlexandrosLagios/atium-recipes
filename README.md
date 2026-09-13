@@ -19,7 +19,10 @@ Telegram traffic. It does open one local port for the Notion OAuth
 callback, proxied over HTTPS by the VPS's shared reverse proxy; see
 [.claude/skills/vps-connection/SKILL.md](.claude/skills/vps-connection/SKILL.md).
 It answers only a Telegram user whose ID is in `TELEGRAM_ALLOWED_USER_IDS`;
-every other user is ignored before any of their messages are read.
+every other user is ignored before any of their messages are read. Send
+`/disconnect` to remove your stored Notion connection at any point. Each
+connected user's Notion access and refresh tokens are stored in a SQLite
+file on the `recipebot-data` volume.
 
 ## Choosing a model provider
 

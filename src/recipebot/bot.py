@@ -94,8 +94,8 @@ async def call_with_reconnect(chat_id: int, context, fn):
             if exc.status == 401:
                 users.delete(chat_id)
             raise
-        tokens = oauth.refresh_access_token(
-            cfg.notion_client_id, cfg.notion_client_secret, record.notion_refresh_token
+        tokens = await asyncio.to_thread(
+            oauth.refresh_access_token, cfg.notion_client_id, cfg.notion_client_secret, record.notion_refresh_token
         )
         record = UserRecord(
             telegram_user_id=record.telegram_user_id,
@@ -179,6 +179,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         url, created = await call_with_reconnect(
             chat_id, context, lambda store: store.save_recipe(preview.recipe, preview.vocab, merges)
         )
+    except LookupError:
+        url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
+        await query.edit_message_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
+        return
     except Exception:
         PREVIEWS[token] = preview
         log.exception("save_recipe failed for token %s", token)

@@ -56,6 +56,13 @@ def test_a_non_integer_id_fails_at_startup(monkeypatch):
         Config.from_env()
 
 
+def test_a_double_negative_id_fails_at_startup_instead_of_a_bare_valueerror(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="5,--3")
+
+    with pytest.raises(RuntimeError, match="--3"):
+        Config.from_env()
+
+
 def test_an_empty_allowlist_fails_at_startup(monkeypatch):
     set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="")
 

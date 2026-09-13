@@ -1,4 +1,3 @@
-import time
 from http.client import HTTPConnection
 
 import pytest
@@ -49,7 +48,11 @@ class FakeSearch:
     def __call__(self, **kwargs):
         return {
             "results": [
-                {"id": "page-1", "properties": {"title": {"title": [{"plain_text": "Kitchen"}]}}}
+                {
+                    "id": "page-1",
+                    "parent": {"type": "workspace"},
+                    "properties": {"title": {"title": [{"plain_text": "Kitchen"}]}},
+                }
             ]
         }
 

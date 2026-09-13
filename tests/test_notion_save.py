@@ -234,7 +234,7 @@ def test_create_user_databases_creates_both_from_the_fixture():
     assert titles == ["Ingredients", "Recipes"]
     # The Recipes call carries a relation pointed at the just-created Ingredients data source.
     recipes_call = client.databases.created[1]
-    assert recipes_call["properties"]["Ingredients"]["relation"]["data_source_id"] == "ds1"
+    assert recipes_call["initial_data_source"]["properties"]["Ingredients"]["relation"]["data_source_id"] == "ds1"
 
 
 def test_create_user_databases_reuses_an_existing_pair_instead_of_duplicating():

@@ -25,7 +25,7 @@ def _parse_allowed_ids(raw: str) -> frozenset[int]:
         part = part.strip()
         if not part:
             continue
-        if not part.lstrip("-").isdigit():
+        if not part.lstrip("-").isdigit() or part.count("-") > 1:
             raise RuntimeError(f"TELEGRAM_ALLOWED_USER_IDS contains a non-integer id: {part!r}")
         ids.append(int(part))
     if not ids:
