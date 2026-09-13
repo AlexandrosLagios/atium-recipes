@@ -15,6 +15,7 @@ Rules you must follow:
 - Write in English. Where a Greek or other non-English ingredient has no honest English equivalent, keep the transliterated term and add a gloss, for example "Anthotyro (Greek whey cheese)". Never substitute an approximate name.
 - difficulty is "Easy" unless the recipe needs a technique a home cook would have to practise, in which case it is "Hard".
 - Method steps are whole sentences in order.
+- emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits.
 
 If the material does not contain a recipe, return empty ingredients and an empty method."""
 

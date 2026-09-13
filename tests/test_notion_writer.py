@@ -319,3 +319,21 @@ def test_an_append_failure_on_a_long_body_still_returns_the_page_url():
     url = store.create_recipe(a_recipe(method=[f"Step {i}." for i in range(150)]), [], VOCAB)
 
     assert url == "https://notion.so/r1"
+
+
+def test_create_recipe_sets_the_emoji_as_the_page_icon():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(emoji="🥘"), ["p2"], VOCAB)
+
+    assert client.pages.created[0]["icon"] == {"type": "emoji", "emoji": "🥘"}
+
+
+def test_create_recipe_omits_the_icon_when_the_model_gave_no_emoji():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(emoji=""), ["p2"], VOCAB)
+
+    assert "icon" not in client.pages.created[0]

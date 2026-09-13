@@ -218,6 +218,8 @@ class NotionStore:
         }
         if recipe.image_url:
             create_args["cover"] = {"type": "external", "external": {"url": recipe.image_url}}
+        if recipe.emoji:
+            create_args["icon"] = {"type": "emoji", "emoji": recipe.emoji}
 
         page = self.client.pages.create(**create_args)
         try:

@@ -1,3 +1,4 @@
+import unicodedata
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -22,6 +23,34 @@ def canonical_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, _kept_query(parts), ""))
 
 
+# A Notion page icon is one emoji, and the API rejects the whole page when it is
+# anything else. The model returns a string, so keep the first grapheme cluster
+# and drop the rest: a zero width joiner, a variation selector, a keycap, a skin
+# tone modifier and a second regional indicator all continue the same emoji.
+_CONTINUATIONS = frozenset({0x200D, 0xFE0F, 0x20E3})
+_SKIN_TONES = range(0x1F3FB, 0x1F400)
+_REGIONAL = range(0x1F1E6, 0x1F200)
+
+
+def first_emoji(value: str) -> str:
+    value = value.strip()
+    if not value or unicodedata.category(value[0]) != "So":
+        return ""
+    kept = [value[0]]
+    for char in value[1:]:
+        code = ord(char)
+        continues = (
+            kept[-1] == "\u200d"
+            or code in _CONTINUATIONS
+            or code in _SKIN_TONES
+            or (len(kept) == 1 and code in _REGIONAL and ord(kept[0]) in _REGIONAL)
+        )
+        if not continues:
+            break
+        kept.append(char)
+    return "".join(kept)
+
+
 class Ingredient(BaseModel):
     name: str
     quantity: str = ""
@@ -37,6 +66,12 @@ class ExtractedRecipe(BaseModel):
     servings: int
     ingredients: list[Ingredient]
     method: list[str]
+    emoji: str = ""
+
+    @field_validator("emoji")
+    @classmethod
+    def _single_emoji(cls, value: str) -> str:
+        return first_emoji(value)
 
 
 class Recipe(ExtractedRecipe):
