@@ -66,6 +66,12 @@
   },
   "recipes": {
     "properties": {
+      "Created time": {
+        "created_time": {},
+        "description": null,
+        "name": "Created time",
+        "type": "created_time"
+      },
       "Cuisine": {
         "description": null,
         "name": "Cuisine",
@@ -141,6 +147,12 @@
           "format": "number"
         },
         "type": "number"
+      },
+      "Last edited time": {
+        "description": null,
+        "last_edited_time": {},
+        "name": "Last edited time",
+        "type": "last_edited_time"
       },
       "Meal": {
         "description": null,
