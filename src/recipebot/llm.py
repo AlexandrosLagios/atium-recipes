@@ -1,13 +1,9 @@
-import base64
-
-import anthropic
+from dataclasses import dataclass
+from typing import Protocol
 
 from .config import Config
 from .models import ExtractedRecipe
 from .notion import Vocabulary
-
-HAIKU = "claude-haiku-4-5"
-SONNET = "claude-sonnet-5"
 
 SYSTEM = """You extract exactly one recipe from the material the user shares.
 
@@ -35,48 +31,67 @@ def _system_prompt(vocab: Vocabulary) -> str:
     )
 
 
-def text_block(text: str) -> dict:
-    return {"type": "text", "text": text}
+@dataclass(frozen=True)
+class TextPart:
+    text: str
 
 
-def image_block(data: bytes, media_type: str) -> dict:
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": base64.standard_b64encode(data).decode("utf-8"),
-        },
-    }
+@dataclass(frozen=True)
+class ImagePart:
+    data: bytes
+    media_type: str
+
+
+Part = TextPart | ImagePart
+
+
+def text_block(text: str) -> TextPart:
+    return TextPart(text)
+
+
+def image_block(data: bytes, media_type: str) -> ImagePart:
+    return ImagePart(data, media_type)
+
+
+class Backend(Protocol):
+    fast: str
+    strong: str
+    # The exception types this provider raises for a failed call. The escalation
+    # loop catches exactly these, so a bug in our own code still propagates
+    # instead of buying a second call on the stronger model.
+    api_error: tuple[type[BaseException], ...]
+
+    def complete(
+        self, model: str, system: str, parts: list[Part]
+    ) -> ExtractedRecipe | None: ...
+
+    def is_rate_limited(self, exc: Exception) -> bool: ...
 
 
 class Extractor:
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, backend: Backend):
+        self.backend = backend
 
     @classmethod
     def from_config(cls, cfg: Config) -> "Extractor":
-        return cls(anthropic.Anthropic(api_key=cfg.anthropic_key))
+        # Imported here because backends imports the part types defined above.
+        from .backends import backend_from_config
 
-    def extract(self, blocks: list[dict], vocab: Vocabulary) -> ExtractedRecipe | None:
+        return cls(backend_from_config(cfg))
+
+    def extract(self, parts: list[Part], vocab: Vocabulary) -> ExtractedRecipe | None:
         system = _system_prompt(vocab)
-        models = (HAIKU, SONNET)
+        models = (self.backend.fast, self.backend.strong)
         for index, model in enumerate(models):
             last = index == len(models) - 1
             try:
-                # Haiku 4.5 rejects output_config.effort with a 400, so never pass it.
-                response = self.client.messages.parse(
-                    model=model,
-                    max_tokens=8000,
-                    system=system,
-                    messages=[{"role": "user", "content": blocks}],
-                    output_format=ExtractedRecipe,
-                )
-            except anthropic.APIStatusError as exc:
-                if last or exc.status_code == 429:
+                result = self.backend.complete(model, system, parts)
+            except self.backend.api_error as exc:
+                # Escalating on a rate limit would promote every later message
+                # to the expensive model for as long as the limit holds.
+                if last or self.backend.is_rate_limited(exc):
                     raise
                 continue
-            parsed = response.parsed_output
-            if parsed and parsed.ingredients and parsed.method:
-                return parsed
+            if result and result.ingredients and result.method:
+                return result
         return None

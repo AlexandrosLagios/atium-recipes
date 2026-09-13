@@ -9,7 +9,8 @@ CFG = Config(
     notion_token="ntn",
     recipes_ds="ds-r",
     ingredients_ds="ds-i",
-    anthropic_key="sk-ant",
+    llm_provider="gemini",
+    llm_api_key="g-key",
 )
 
 
@@ -37,7 +38,8 @@ from recipebot import __main__ as entrypoint
 
 def test_main_refuses_to_start_without_the_environment(monkeypatch):
     for name in ("TELEGRAM_TOKEN", "TELEGRAM_ALLOWED_USER_ID", "NOTION_TOKEN",
-                 "NOTION_RECIPES_DS", "NOTION_INGREDIENTS_DS", "ANTHROPIC_API_KEY"):
+                 "NOTION_RECIPES_DS", "NOTION_INGREDIENTS_DS", "LLM_PROVIDER",
+                 "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):

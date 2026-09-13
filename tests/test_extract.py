@@ -1,6 +1,7 @@
 import pytest
 
 from recipebot import extract
+from recipebot.llm import ImagePart, TextPart
 from recipebot.models import ExtractedRecipe, Ingredient
 from recipebot.notion import Vocabulary
 from recipebot.scrape import ScrapeResult
@@ -152,9 +153,9 @@ def test_a_social_url_sends_the_caption_and_the_frames(monkeypatch):
     assert recipe.high_confidence is False
     assert recipe.image_url == "https://cdn/t.jpg"
     assert recipe.source_text == "Best noodles"
-    kinds = [block["type"] for block in stub.calls[0]]
-    assert kinds.count("image") == 1
-    assert "text" in kinds
+    kinds = [type(part) for part in stub.calls[0]]
+    assert kinds.count(ImagePart) == 1
+    assert TextPart in kinds
 
 
 def test_a_social_url_has_a_canonical_source_url(monkeypatch):
@@ -186,7 +187,7 @@ def test_from_photo_sends_an_image_block_and_no_source_url():
     assert recipe.source == "Photo"
     assert recipe.source_url == ""
     assert recipe.high_confidence is False
-    assert stub.calls[0][0]["type"] == "image"
+    assert isinstance(stub.calls[0][0], ImagePart)
 
 
 def test_from_text_keeps_the_pasted_text_as_source_text():
