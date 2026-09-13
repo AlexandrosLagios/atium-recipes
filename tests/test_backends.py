@@ -1,21 +1,27 @@
 import base64
+import json
 
 import anthropic
+import httpx2
 import pytest
 from google.genai import errors
 
 from recipebot.backends import (
     ANTHROPIC_FAST,
     ANTHROPIC_STRONG,
+    GEMINI_ATTEMPTS,
     GEMINI_FAST,
     GEMINI_STRONG,
+    GEMINI_TIMEOUT_MS,
+    MAX_TOKENS,
     AnthropicBackend,
     GeminiBackend,
     backend_from_config,
 )
 from recipebot.config import Config
-from recipebot.llm import image_block, text_block
+from recipebot.llm import Extractor, image_block, text_block
 from recipebot.models import ExtractedRecipe, Ingredient
+from recipebot.notion import Vocabulary
 
 FULL = ExtractedRecipe(
     name="Pickles",
@@ -269,3 +275,85 @@ def test_backend_from_config_applies_the_model_overrides():
 def test_backend_from_config_refuses_an_unknown_provider():
     with pytest.raises(RuntimeError, match="ollama"):
         backend_from_config(config(llm_provider="ollama"))
+
+
+VOCAB = Vocabulary(
+    ingredients={"Chicken": "p1"},
+    cuisines=["Chinese"],
+    meals=["Side"],
+    categories=["Staples"],
+)
+
+TRUNCATED = FULL.model_dump_json()[: len(FULL.model_dump_json()) // 2]
+
+
+def anthropic_over_transport(text: str, models: list | None = None):
+    """A real Anthropic client whose transport replies with `text` as the body."""
+
+    def handler(request):
+        if models is not None:
+            models.append(json.loads(request.content)["model"])
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": ANTHROPIC_FAST,
+                "content": [{"type": "text", "text": text}],
+                "stop_reason": "max_tokens",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": MAX_TOKENS},
+            },
+        )
+
+    return anthropic.Anthropic(
+        api_key="test-key-not-real",
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handler)),
+    )
+
+
+def test_anthropic_reads_output_truncated_at_max_tokens_as_an_empty_parse():
+    backend = AnthropicBackend(anthropic_over_transport(TRUNCATED))
+
+    assert backend.complete(ANTHROPIC_FAST, "s", [text_block("body")]) is None
+
+
+def test_a_truncated_anthropic_parse_escalates_to_the_strong_model():
+    models = []
+    backend = AnthropicBackend(anthropic_over_transport(TRUNCATED, models))
+
+    assert Extractor(backend).extract([text_block("body")], VOCAB) is None
+    assert models == [ANTHROPIC_FAST, ANTHROPIC_STRONG]
+
+
+def test_a_complete_anthropic_body_over_the_transport_still_parses():
+    backend = AnthropicBackend(anthropic_over_transport(FULL.model_dump_json()))
+
+    assert backend.complete(ANTHROPIC_FAST, "s", [text_block("body")]) == FULL
+
+
+def test_gemini_turns_off_the_automatic_function_calling_loop():
+    client = FakeGeminiClient()
+
+    GeminiBackend(client).complete("m", "s", [text_block("body")])
+
+    afc = client.models.calls[0]["config"].automatic_function_calling
+    assert afc is not None
+    assert afc.disable is True
+
+
+def test_backend_from_config_gives_the_gemini_client_retries():
+    options = backend_from_config(config()).client._api_client._http_options
+
+    assert options.retry_options is not None
+    assert options.retry_options.attempts == GEMINI_ATTEMPTS
+    assert GEMINI_ATTEMPTS > 1
+
+
+def test_backend_from_config_gives_the_gemini_client_a_request_timeout():
+    options = backend_from_config(config()).client._api_client._http_options
+
+    assert options.timeout == GEMINI_TIMEOUT_MS
+    # The SDK reads HttpOptions.timeout as milliseconds.
+    assert 0 < GEMINI_TIMEOUT_MS / 1000 <= 180

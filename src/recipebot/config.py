@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 DEFAULT_PROVIDER = "gemini"
 
@@ -19,13 +19,13 @@ _VARS = [
 
 @dataclass(frozen=True)
 class Config:
-    telegram_token: str
+    telegram_token: str = field(repr=False)
     allowed_user_id: int
-    notion_token: str
+    notion_token: str = field(repr=False)
     recipes_ds: str
     ingredients_ds: str
     llm_provider: str
-    llm_api_key: str
+    llm_api_key: str = field(repr=False)
     model_fast: str = ""
     model_strong: str = ""
 

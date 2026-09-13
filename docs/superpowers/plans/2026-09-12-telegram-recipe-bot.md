@@ -2931,7 +2931,7 @@ git commit -m "feat: add the service entrypoint, Docker image, and Compose servi
 
 ### Task 15: Verify against the real Notion database
 
-**Blocked on the user.** This task needs four secrets that only the user can create: a Telegram bot token from BotFather, the user's own Telegram user ID from `@userinfobot`, a Notion internal integration token with the Kitchen page shared to it, and an Anthropic API key. Tasks 1 to 14 run to completion without them. Do not start this task until the user confirms `.env` is filled.
+**Blocked on the user.** This task needs four secrets that only the user can create: a Telegram bot token from BotFather, the user's own Telegram user ID from `@userinfobot`, a Notion internal integration token with the Kitchen page shared to it, and an API key for whichever provider `LLM_PROVIDER` selects. Tasks 1 to 14 run to completion without them. Do not start this task until the user confirms `.env` is filled.
 
 **Files:**
 - Modify: whatever the run exposes as broken. Every fix carries its own regression test.
