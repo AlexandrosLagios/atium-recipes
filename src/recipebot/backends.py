@@ -10,8 +10,8 @@ from .models import ExtractedRecipe
 
 ANTHROPIC_FAST = "claude-haiku-4-5"
 ANTHROPIC_STRONG = "claude-sonnet-5"
-GEMINI_FAST = "gemini-2.5-flash-lite"
-GEMINI_STRONG = "gemini-2.5-flash"
+GEMINI_FAST = "gemini-3.1-flash-lite"
+GEMINI_STRONG = "gemini-3.7-flash"
 
 MAX_TOKENS = 8000
 

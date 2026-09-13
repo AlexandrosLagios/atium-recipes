@@ -25,7 +25,7 @@ Set the key for the provider you choose and leave the other unset:
 
 | `LLM_PROVIDER` | Required key | Fast model | Strong model |
 | --- | --- | --- | --- |
-| `gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash-lite` | `gemini-2.5-flash` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-3.1-flash-lite` | `gemini-3.7-flash` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` | `claude-sonnet-5` |
 
 Every extraction starts on the fast model and escalates to the strong one

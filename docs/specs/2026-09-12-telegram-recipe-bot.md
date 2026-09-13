@@ -21,7 +21,7 @@ Run a fast model for text and vision, and escalate to a stronger model only
 when a parse returns empty. The provider and the two model ids are
 configuration, not code: `LLM_PROVIDER` selects `gemini` or `anthropic`, and
 `LLM_MODEL_FAST` and `LLM_MODEL_STRONG` override the ids. The current default
-is Gemini, `gemini-2.5-flash-lite` escalating to `gemini-2.5-flash`.
+is Gemini, `gemini-3.1-flash-lite` escalating to `gemini-3.7-flash`.
 
 A high-confidence result writes to Notion at once and the bot replies with the
 page link. A low-confidence result produces a preview message with Save and

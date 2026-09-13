@@ -155,8 +155,8 @@ def test_gemini_defaults_to_the_documented_model_pair():
 
     assert (backend.fast, backend.strong) == (GEMINI_FAST, GEMINI_STRONG)
     assert (GEMINI_FAST, GEMINI_STRONG) == (
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.7-flash",
     )
 
 
