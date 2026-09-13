@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from notion_client import Client
 
 from . import oauth
+from .config import Config
 from .notion import create_user_databases
 from .users import UserRecord
 
@@ -19,7 +20,7 @@ log = logging.getLogger(__name__)
 PENDING: dict[str, int] = {}
 
 
-def start_connect(telegram_user_id: int, cfg) -> str:
+def start_connect(telegram_user_id: int, cfg: Config) -> str:
     state = uuid.uuid4().hex
     PENDING[state] = telegram_user_id
     return oauth.build_authorize_url(cfg.notion_client_id, cfg.notion_redirect_uri, state)
@@ -30,7 +31,7 @@ def _handle_connect(cfg, users, fixture, notify, chat_id: int, code: str) -> Non
     client = Client(auth=tokens.access_token)
     page = oauth.find_shared_page(client)
     if page is None:
-        notify((chat_id, "I didn't see a shared page. Send me a message and try again, and share a page this time."))
+        notify(chat_id, "I didn't see a shared page. Send me a message and try again, and share a page this time.")
         return
     page_id, page_title = page
     recipes_ds, ingredients_ds = create_user_databases(client, page_id, fixture)
@@ -45,7 +46,7 @@ def _handle_connect(cfg, users, fixture, notify, chat_id: int, code: str) -> Non
             connected_at=int(time.time()),
         )
     )
-    notify((chat_id, f"Connected to '{page_title}'. Send me a recipe."))
+    notify(chat_id, f"Connected to '{page_title}'. Send me a recipe.")
 
 
 def _page(message: str) -> bytes:
@@ -66,7 +67,7 @@ def make_server(cfg, users, fixture: dict, notify) -> HTTPServer:
                 _handle_connect(cfg, users, fixture, notify, chat_id, code)
             except Exception:
                 log.exception("oauth callback failed for chat %s", chat_id)
-                notify((chat_id, "Connecting to Notion failed. Send me a message to try again."))
+                notify(chat_id, "Connecting to Notion failed. Send me a message to try again.")
                 self._respond(200, "Something went wrong. Check Telegram for what to do next.")
                 return
             self._respond(200, "Connected. Go back to Telegram.")

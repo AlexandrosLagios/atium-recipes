@@ -96,7 +96,9 @@ def server(tmp_path, monkeypatch):
     cfg = a_config()
     users = UserStore(str(tmp_path / "users.db"))
     notifications = []
-    http_server = callback_server.make_server(cfg, users, FIXTURE, notifications.append)
+    http_server = callback_server.make_server(
+        cfg, users, FIXTURE, lambda chat_id, text: notifications.append((chat_id, text))
+    )
     thread = callback_server.run_in_background(http_server)
     yield http_server, users, notifications
     http_server.shutdown()
