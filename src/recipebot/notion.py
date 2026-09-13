@@ -149,6 +149,7 @@ def _body_blocks(recipe: Recipe) -> list[dict]:
     blocks.append(_block("heading_2", "Method"))
     blocks.extend(_block("numbered_list_item", step) for step in recipe.method)
     blocks.append(_block("heading_2", "Notes"))
+    blocks.extend(_block("bulleted_list_item", note) for note in recipe.notes)
     blocks.append(_block("toggle", "Source text", children=_paragraphs(recipe.source_text)))
     return blocks
 
