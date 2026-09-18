@@ -30,11 +30,15 @@ def test_find_by_url_strips_the_query_string_before_querying():
     assert client.data_sources.last_page_size == 1
 
 
-def test_find_by_url_returns_the_existing_page_url():
+# The id travels with the url so a reimport can rewrite that same page.
+def test_find_by_url_returns_the_existing_page():
     client = FakeClient([{"id": "p9", "url": "https://notion.so/p9"}])
     store = NotionStore(client, "ds-recipes", "ds-ingredients")
 
-    assert store.find_by_url("https://redhousespice.com/x/") == "https://notion.so/p9"
+    assert store.find_by_url("https://redhousespice.com/x/") == {
+        "id": "p9",
+        "url": "https://notion.so/p9",
+    }
 
 
 def test_find_by_url_returns_none_for_an_empty_url():

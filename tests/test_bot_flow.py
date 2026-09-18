@@ -132,8 +132,8 @@ def test_first_url_finds_the_link_inside_a_shared_message():
     assert bot.first_url("no link here") == ""
 
 
-async def test_a_known_url_replies_with_the_existing_page_and_never_extracts(monkeypatch):
-    store = FakeStore(existing="https://notion.so/old")
+async def test_a_known_url_offers_a_reimport_and_never_extracts_on_its_own(monkeypatch):
+    store = FakeStore(existing={"id": "page-old", "url": "https://notion.so/old"})
     called = []
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: called.append(1))
     update = make_update(text="https://redhousespice.com/x/")
@@ -142,7 +142,10 @@ async def test_a_known_url_replies_with_the_existing_page_and_never_extracts(mon
 
     assert called == []
     assert store.saved == []
-    assert "https://notion.so/old" in update.message.reply_text.call_args[0][0]
+    call = update.message.reply_text.call_args
+    assert "https://notion.so/old" in call[0][0]
+    labels = [b.text for row in call[1]["reply_markup"].inline_keyboard for b in row]
+    assert labels == ["Refetch link", "Reuse saved text", "Keep"]
 
 
 async def test_a_high_confidence_recipe_writes_at_once(monkeypatch):
@@ -221,6 +224,7 @@ def make_photo_update(caption=""):
     update.message.photo = [type("P", (), {"file_id": "small"})(), type("P", (), {"file_id": "big"})()]
     update.message.document = None
     update.message.reply_text = AsyncMock()
+    update.effective_message = update.message
     return update
 
 

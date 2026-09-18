@@ -21,7 +21,7 @@ from telegram.ext import (
 
 from . import callback_server, oauth
 from .config import Config
-from .extract import from_photo, from_text, from_url
+from .extract import from_photo, from_text, from_url, source_for
 from .llm import Extractor
 from .models import Recipe
 from .notion import IngredientPlan, NotionStore, Vocabulary, reconcile_ingredients
@@ -54,7 +54,13 @@ ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a dif
 # user re-shares the link. Persist them only if a restart ever loses real work.
 PREVIEWS: dict[str, "Preview"] = {}
 
+# ponytail: reimports live beside the previews, and expire the same way.
+REIMPORTS: dict[str, "Reimport"] = {}
+
 EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
+NO_SOURCE_TEXT_MESSAGE = (
+    "That page has no saved source text. Tap Refetch link to read the site again."
+)
 
 CONNECT_MESSAGE = "Connect your Notion account to save recipes there."
 
@@ -68,6 +74,15 @@ class Preview:
     recipe: Recipe
     vocab: Vocabulary
     merges: dict[str, str] = field(default_factory=dict)
+    # Set when this preview rewrites a page that already exists.
+    page_id: str = ""
+
+
+@dataclass
+class Reimport:
+    page_id: str
+    page_url: str
+    source_url: str
 
 
 def first_url(text: str) -> str:
@@ -129,16 +144,26 @@ async def call_with_reconnect(chat_id: int, context, fn):
             raise
 
 
-async def handle_recipe(recipe: Recipe, chat_id: int, context, vocab, update) -> None:
+def write_recipe(store, recipe: Recipe, vocab, merges: dict[str, str], page_id: str) -> str:
+    """Write the recipe and report it in one sentence. A page id rewrites that
+    page; without one the store creates a page, or finds the URL already there."""
+    if page_id:
+        return f"Reimported: {store.update_recipe(page_id, recipe, vocab, merges)}"
+    url, created = store.save_recipe(recipe, vocab, merges)
+    return f"Saved: {url}" if created else f"Already saved: {url}"
+
+
+async def handle_recipe(
+    recipe: Recipe, chat_id: int, context, vocab, update, page_id: str = ""
+) -> None:
     plan = reconcile_ingredients(vocab, recipe.ingredients)
     if recipe.high_confidence and not plan.near:
-        url, created = await call_with_reconnect(
-            chat_id, context, lambda store: store.save_recipe(recipe, vocab)
+        message = await call_with_reconnect(
+            chat_id, context, lambda store: write_recipe(store, recipe, vocab, {}, page_id)
         )
-        message = f"Saved: {url}" if created else f"Already saved: {url}"
-        await update.message.reply_text(message)
+        await update.effective_message.reply_text(message)
         return
-    await send_preview(recipe, plan, vocab, update)
+    await send_preview(recipe, plan, vocab, update, page_id)
 
 
 def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
@@ -165,18 +190,92 @@ def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
-async def send_preview(recipe, plan, vocab, update) -> None:
+async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
     token = uuid.uuid4().hex
-    PREVIEWS[token] = Preview(recipe=recipe, vocab=vocab, merges=dict(plan.near))
-    await update.message.reply_text(
+    PREVIEWS[token] = Preview(
+        recipe=recipe, vocab=vocab, merges=dict(plan.near), page_id=page_id
+    )
+    await update.effective_message.reply_text(
         preview_text(recipe, plan), reply_markup=preview_markup(token, plan)
     )
+
+
+REIMPORT_ACTIONS = frozenset({"refetch", "stored", "keep"})
+
+
+def reimport_markup(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Refetch link", callback_data=f"refetch:{token}"),
+                InlineKeyboardButton("Reuse saved text", callback_data=f"stored:{token}"),
+                InlineKeyboardButton("Keep", callback_data=f"keep:{token}"),
+            ]
+        ]
+    )
+
+
+async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
+    token = uuid.uuid4().hex
+    REIMPORTS[token] = Reimport(
+        page_id=page["id"], page_url=page["url"], source_url=source_url
+    )
+    await update.effective_message.reply_text(
+        f"Already saved: {page['url']}\n\nReimport it? Refetch link reads the site again. "
+        "Reuse saved text runs the extraction over the text already on the page. "
+        "Both replace the page body, so anything you wrote there by hand goes.",
+        reply_markup=reimport_markup(token),
+    )
+
+
+async def on_reimport(action: str, token: str, update, context) -> None:
+    query = update.callback_query
+    job = REIMPORTS.pop(token, None)
+    if job is None:
+        await query.edit_message_text(EXPIRED_MESSAGE)
+        return
+    if action == "keep":
+        await query.edit_message_text(f"Left as it is: {job.page_url}")
+        return
+
+    chat_id = update.effective_user.id
+    extractor = context.bot_data["extractor"]
+    await query.edit_message_text(f"Reimporting {job.page_url}")
+    vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())
+
+    if action == "refetch":
+        try:
+            recipe = await asyncio.to_thread(from_url, job.source_url, extractor, vocab)
+        except SocialBlocked:
+            await query.message.reply_text(BLOCKED_MESSAGE)
+            return
+    else:
+        text = await call_with_reconnect(
+            chat_id, context, lambda store: store.source_text(job.page_id)
+        )
+        if not text.strip():
+            await query.message.reply_text(NO_SOURCE_TEXT_MESSAGE)
+            return
+        recipe = await asyncio.to_thread(
+            from_text,
+            text,
+            extractor,
+            vocab,
+            source=source_for(job.source_url),
+            source_url=job.source_url,
+        )
+
+    await _deliver(recipe, chat_id, context, vocab, update, page_id=job.page_id)
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     action, _, token = query.data.partition(":")
+
+    if action in REIMPORT_ACTIONS:
+        await on_reimport(action, token, update, context)
+        return
 
     preview = PREVIEWS.pop(token, None)
     if preview is None:
@@ -190,8 +289,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     merges = preview.merges if action == "merge" else {}
     chat_id = update.effective_user.id
     try:
-        url, created = await call_with_reconnect(
-            chat_id, context, lambda store: store.save_recipe(preview.recipe, preview.vocab, merges)
+        message = await call_with_reconnect(
+            chat_id,
+            context,
+            lambda store: write_recipe(
+                store, preview.recipe, preview.vocab, merges, preview.page_id
+            ),
         )
     except LookupError:
         url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
@@ -209,15 +312,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 reply_markup=preview_markup(token, IngredientPlan(near=preview.merges)),
             )
         return
-    message = f"Saved: {url}" if created else f"Already saved: {url}"
     await query.edit_message_text(message)
 
 
-async def _deliver(recipe_or_none, chat_id: int, context, vocab, update) -> None:
+async def _deliver(recipe_or_none, chat_id: int, context, vocab, update, page_id: str = "") -> None:
     if recipe_or_none is None:
-        await update.message.reply_text(NO_RECIPE_MESSAGE)
+        await update.effective_message.reply_text(NO_RECIPE_MESSAGE)
         return
-    await handle_recipe(recipe_or_none, chat_id, context, vocab, update)
+    await handle_recipe(recipe_or_none, chat_id, context, vocab, update, page_id)
 
 
 async def send_connect_button(update, context) -> None:
@@ -259,7 +361,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if url:
         existing = await call_with_reconnect(chat_id, context, lambda store: store.find_by_url(url))
         if existing:
-            await update.message.reply_text(f"Already saved: {existing}")
+            await send_reimport_prompt(existing, url, update)
             return
 
     vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())

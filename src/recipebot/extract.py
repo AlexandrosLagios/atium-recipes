@@ -112,8 +112,12 @@ def from_photo(
     )
 
 
-def from_text(text: str, extractor, vocab: Vocabulary) -> Recipe | None:
+def from_text(
+    text: str, extractor, vocab: Vocabulary, *, source: str = "Text", source_url: str = ""
+) -> Recipe | None:
     extracted = extractor.extract([text_block(text)], vocab)
     if extracted is None:
         return None
-    return Recipe.from_extracted(extracted, source="Text", source_text=text)
+    return Recipe.from_extracted(
+        extracted, source=source, source_url=source_url, source_text=text
+    )

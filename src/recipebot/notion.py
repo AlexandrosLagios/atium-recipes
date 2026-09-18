@@ -110,6 +110,7 @@ CHILDREN_LIMIT = 100
 # capped at 90 paragraphs (180k characters). Chunk the toggle too if a real
 # transcript ever hits the cap.
 SOURCE_TEXT_BLOCK_LIMIT = 90
+SOURCE_TEXT_HEADING = "Source text"
 
 
 # Notion measures rich text in UTF-16 code units, the way JavaScript does, so
@@ -141,6 +142,57 @@ def _paragraphs(text: str) -> list[dict]:
     return [_block("paragraph", chunk) for chunk in chunks[:SOURCE_TEXT_BLOCK_LIMIT]]
 
 
+# Reads a block the API returned and a block built locally alike: the first
+# carries plain_text, the second only the content it was built from.
+def block_text(block: dict) -> str:
+    kind = block["type"]
+    return "".join(
+        rt.get("plain_text") or rt.get("text", {}).get("content", "")
+        for rt in block[kind].get("rich_text", [])
+    )
+
+
+def page_children(client, block_id: str) -> list[dict]:
+    out, cursor = [], None
+    while True:
+        page = client.blocks.children.list(block_id=block_id, start_cursor=cursor)
+        out += page["results"]
+        cursor = page.get("next_cursor")
+        if not page.get("has_more"):
+            return out
+
+
+def _page_face(recipe: Recipe) -> dict:
+    face = {}
+    if recipe.image_url:
+        face["cover"] = {"type": "external", "external": {"url": recipe.image_url}}
+    if recipe.emoji:
+        face["icon"] = {"type": "emoji", "emoji": recipe.emoji}
+    return face
+
+
+def _recipe_properties(
+    recipe: Recipe, ingredient_page_ids: list[str], vocab: Vocabulary
+) -> dict:
+    properties = {
+        "Name": {"title": _rt(recipe.name)},
+        "Source": {"select": {"name": recipe.source}},
+        "Meal": {"multi_select": [{"name": name} for name in _meal_options(recipe.meal, vocab.meals)]},
+        "Difficulty": {"select": {"name": recipe.difficulty}},
+        "Time (min)": {"number": recipe.time_min},
+        "Servings": {"number": recipe.servings},
+        "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
+    }
+    cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
+    if cuisine:
+        properties["Cuisine"] = {"select": {"name": cuisine}}
+    if recipe.keeps_days:
+        properties["Keeps (days)"] = {"number": recipe.keeps_days}
+    if recipe.source_url:
+        properties["Source URL"] = {"url": recipe.source_url}
+    return properties
+
+
 def _body_blocks(recipe: Recipe) -> list[dict]:
     blocks = [_block("heading_2", "Ingredients")]
     group = ""
@@ -156,7 +208,9 @@ def _body_blocks(recipe: Recipe) -> list[dict]:
     if recipe.notes:
         blocks.append(_block("heading_2", "Notes"))
         blocks.extend(_block("bulleted_list_item", note) for note in recipe.notes)
-    blocks.append(_block("toggle", "Source text", children=_paragraphs(recipe.source_text)))
+    blocks.append(
+        _block("toggle", SOURCE_TEXT_HEADING, children=_paragraphs(recipe.source_text))
+    )
     return blocks
 
 
@@ -340,7 +394,7 @@ class NotionStore:
                 log.info("adding %s to %s", ", ".join(missing), data_source_id)
                 _apply_properties(self.client, data_source_id, missing)
 
-    def find_by_url(self, url: str) -> str | None:
+    def find_by_url(self, url: str) -> dict | None:
         target = canonical_url(url)
         if not target:
             return None
@@ -350,7 +404,17 @@ class NotionStore:
             page_size=1,
         )
         pages = result["results"]
-        return pages[0]["url"] if pages else None
+        return pages[0] if pages else None
+
+    def source_text(self, page_id: str) -> str:
+        for block in page_children(self.client, page_id):
+            if block["type"] == "toggle" and block_text(block) == SOURCE_TEXT_HEADING:
+                return "\n".join(
+                    block_text(child)
+                    for child in page_children(self.client, block["id"])
+                    if child["type"] == "paragraph"
+                )
+        return ""
 
     def create_ingredient(self, name: str, category: str, categories: list[str]) -> str:
         chosen = _snap_category(category, categories)
@@ -367,34 +431,13 @@ class NotionStore:
     def create_recipe(
         self, recipe: Recipe, ingredient_page_ids: list[str], vocab: Vocabulary
     ) -> str:
-        meals = _meal_options(recipe.meal, vocab.meals)
-        properties = {
-            "Name": {"title": _rt(recipe.name)},
-            "Source": {"select": {"name": recipe.source}},
-            "Meal": {"multi_select": [{"name": name} for name in meals]},
-            "Difficulty": {"select": {"name": recipe.difficulty}},
-            "Time (min)": {"number": recipe.time_min},
-            "Servings": {"number": recipe.servings},
-            "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
-        }
-        cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
-        if cuisine:
-            properties["Cuisine"] = {"select": {"name": cuisine}}
-        if recipe.keeps_days:
-            properties["Keeps (days)"] = {"number": recipe.keeps_days}
-        if recipe.source_url:
-            properties["Source URL"] = {"url": recipe.source_url}
-
         blocks = _body_blocks(recipe)
         create_args = {
             "parent": {"type": "data_source_id", "data_source_id": self.recipes_ds},
-            "properties": properties,
+            "properties": _recipe_properties(recipe, ingredient_page_ids, vocab),
             "children": blocks[:CHILDREN_LIMIT],
+            **_page_face(recipe),
         }
-        if recipe.image_url:
-            create_args["cover"] = {"type": "external", "external": {"url": recipe.image_url}}
-        if recipe.emoji:
-            create_args["icon"] = {"type": "emoji", "emoji": recipe.emoji}
 
         page = self.client.pages.create(**create_args)
         try:
@@ -404,14 +447,9 @@ class NotionStore:
             log.exception("failed to append remaining blocks to %s", page["url"])
         return page["url"]
 
-    def save_recipe(
-        self, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str] | None = None
-    ) -> tuple[str, bool]:
-        existing = self.find_by_url(recipe.source_url)
-        if existing:
-            return existing, False
-
-        merges = merges or {}
+    def _ingredient_page_ids(
+        self, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str]
+    ) -> list[str]:
         plan = reconcile_ingredients(vocab, recipe.ingredients)
         categories = {item.name: item.category for item in recipe.ingredients}
         page_ids = list(plan.existing.values())
@@ -432,6 +470,44 @@ class NotionStore:
                     name, categories.get(name, ""), vocab.categories
                 )
             page_ids.append(created[key])
+        return list(dict.fromkeys(page_ids))
 
-        url = self.create_recipe(recipe, list(dict.fromkeys(page_ids)), vocab)
-        return url, True
+    def save_recipe(
+        self, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str] | None = None
+    ) -> tuple[str, bool]:
+        existing = self.find_by_url(recipe.source_url)
+        if existing:
+            return existing["url"], False
+
+        page_ids = self._ingredient_page_ids(recipe, vocab, merges or {})
+        return self.create_recipe(recipe, page_ids, vocab), True
+
+    def update_recipe(
+        self, page_id: str, recipe: Recipe, vocab: Vocabulary, merges: dict[str, str] | None = None
+    ) -> str:
+        """Rewrite an existing recipe page from a fresh extraction, keeping the
+        page itself, so its rating, its comments and its created time survive.
+        The body is replaced wholesale, so anything hand-written on the page is
+        lost."""
+        page_ids = self._ingredient_page_ids(recipe, vocab, merges or {})
+        # An absent property means "unchanged" to an update and "unset" to a
+        # create, so name the two the new extraction may have dropped. Source URL
+        # stays out: it is how the page is found again, and a reimport always
+        # carries the one it was found by.
+        properties = {
+            "Cuisine": {"select": None},
+            "Keeps (days)": {"number": None},
+            **_recipe_properties(recipe, page_ids, vocab),
+        }
+        page = self.client.pages.update(
+            page_id=page_id, properties=properties, **_page_face(recipe)
+        )
+        stale = page_children(self.client, page_id)
+        # Append before deleting: a failure between the two leaves the old body
+        # and the new one on the page, which reads worse than one body but
+        # loses nothing.
+        for batch in batched(_body_blocks(recipe), CHILDREN_LIMIT):
+            self.client.blocks.children.append(block_id=page_id, children=list(batch))
+        for block in stale:
+            self.client.blocks.delete(block_id=block["id"])
+        return page["url"]

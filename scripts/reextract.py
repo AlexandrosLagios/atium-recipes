@@ -27,6 +27,8 @@ from recipebot.notion import (  # noqa: E402
     NotionStore,
     Vocabulary,
     _body_blocks,
+    block_text as _text,
+    page_children as _children,
     reconcile_ingredients,
 )
 
@@ -47,37 +49,6 @@ def _config() -> Config:
         model_fast=os.environ.get("LLM_MODEL_FAST", ""),
         model_strong=os.environ.get("LLM_MODEL_STRONG", ""),
     )
-
-
-# Reads a block the API returned and a block built locally alike: the first
-# carries plain_text, the second only the content it was built from.
-def _text(block: dict) -> str:
-    kind = block["type"]
-    return "".join(
-        rt.get("plain_text") or rt.get("text", {}).get("content", "")
-        for rt in block[kind].get("rich_text", [])
-    )
-
-
-def _children(client: Client, block_id: str) -> list[dict]:
-    out, cursor = [], None
-    while True:
-        page = client.blocks.children.list(block_id=block_id, start_cursor=cursor)
-        out += page["results"]
-        cursor = page.get("next_cursor")
-        if not page.get("has_more"):
-            return out
-
-
-def _source_text(client: Client, blocks: list[dict]) -> str:
-    for block in blocks:
-        if block["type"] == "toggle" and _text(block) == "Source text":
-            return "\n".join(
-                _text(child)
-                for child in _children(client, block["id"])
-                if child["type"] == "paragraph"
-            )
-    return ""
 
 
 def _body_text(blocks: list[dict]) -> list[str]:
@@ -146,7 +117,7 @@ def main() -> None:
         title_rt = page["properties"]["Name"]["title"]
         title = title_rt[0]["plain_text"] if title_rt else "(untitled)"
         blocks = _children(client, page["id"])
-        source_text = _source_text(client, blocks)
+        source_text = store.source_text(page["id"])
         if not source_text.strip():
             print(f"[skip] {title}: no stored source text")
             continue
