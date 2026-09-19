@@ -2,7 +2,6 @@ import base64
 
 import anthropic
 import pydantic
-from pydantic import BaseModel
 from google import genai
 from google.genai import errors, types
 
@@ -51,7 +50,7 @@ class AnthropicBackend:
         self.fast = fast
         self.strong = strong
 
-    def complete[T: BaseModel](
+    def complete[T: pydantic.BaseModel](
         self,
         model: str,
         system: str,
@@ -99,7 +98,7 @@ class GeminiBackend:
         self.fast = fast
         self.strong = strong
 
-    def complete[T: BaseModel](
+    def complete[T: pydantic.BaseModel](
         self,
         model: str,
         system: str,

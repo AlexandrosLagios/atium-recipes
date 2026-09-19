@@ -87,8 +87,10 @@ class Preview:
     # Set when this preview rewrites a page that already exists.
     page_id: str = ""
     # The message the user replies to in order to correct this preview, and
-    # the chat it lives in. A Telegram message id is unique per chat, never
-    # across chats, so two allowed users routinely hold the same one.
+    # the sender it belongs to. A Telegram message id is unique per chat, never
+    # across chats, so two allowed users routinely hold the same one, and the
+    # id alone would match one user's reply to another user's preview. Holds
+    # effective_user.id, which is what the rest of this module calls chat_id.
     chat_id: int = 0
     message_id: int = 0
 
