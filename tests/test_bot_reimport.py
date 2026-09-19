@@ -88,7 +88,12 @@ class FakeStore:
         return "https://notion.so/new", True
 
 
-def make_update(data):
+# The preview a reimport sends lands on message 77, so a later Save arrives as
+# a callback on that same message.
+PREVIEW_MESSAGE_ID = 77
+
+
+def make_update(data, message_id=0):
     update = type("U", (), {})()
     update.effective_user = type("User", (), {"id": 1})()
     query = type("Q", (), {})()
@@ -96,7 +101,10 @@ def make_update(data):
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
     query.message = type("M", (), {})()
-    query.message.reply_text = AsyncMock()
+    query.message.message_id = message_id
+    query.message.reply_text = AsyncMock(
+        return_value=type("Sent", (), {"message_id": PREVIEW_MESSAGE_ID})()
+    )
     update.callback_query = query
     update.effective_message = query.message
     return update
@@ -141,10 +149,11 @@ async def test_refetch_reads_the_link_again_and_rewrites_the_same_page(monkeypat
     await bot.on_callback(make_update("refetch:tok"), make_context(store))
 
     assert seen == ["https://example.com/braise"]
-    token, preview = next(iter(bot.PREVIEWS.items()))
-    assert preview.page_id == "page-old"
+    assert bot.PREVIEWS[(1, PREVIEW_MESSAGE_ID)].page_id == "page-old"
 
-    await bot.on_callback(make_update(f"save:{token}"), make_context(store))
+    await bot.on_callback(
+        make_update("save", message_id=PREVIEW_MESSAGE_ID), make_context(store)
+    )
 
     assert store.saved == []
     assert [page_id for page_id, _, _ in store.updated] == ["page-old"]
@@ -211,8 +220,7 @@ async def test_saving_a_reimport_names_the_page_it_rewrote(monkeypatch):
     a_pending_reimport()
 
     await bot.on_callback(make_update("refetch:tok"), make_context(store))
-    token = next(iter(bot.PREVIEWS))
-    update = make_update(f"save:{token}")
+    update = make_update("save", message_id=PREVIEW_MESSAGE_ID)
 
     await bot.on_callback(update, make_context(store))
 
@@ -229,10 +237,11 @@ async def test_a_near_match_previews_first_and_saves_in_place(monkeypatch):
     await bot.on_callback(make_update("refetch:tok"), make_context(store))
 
     assert store.updated == []
-    token, preview = next(iter(bot.PREVIEWS.items()))
-    assert preview.page_id == "page-old"
+    assert bot.PREVIEWS[(1, PREVIEW_MESSAGE_ID)].page_id == "page-old"
 
-    await bot.on_callback(make_update(f"merge:{token}"), make_context(store))
+    await bot.on_callback(
+        make_update("merge", message_id=PREVIEW_MESSAGE_ID), make_context(store)
+    )
 
     assert store.saved == []
     assert store.updated == [("page-old", recipe, {"Soy Sauces": "Soy sauce"})]
