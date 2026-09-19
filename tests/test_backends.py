@@ -4,7 +4,7 @@ import json
 import anthropic
 import httpx2
 import pytest
-from google.genai import errors
+from google.genai import errors, types
 
 from recipebot.backends import (
     ANTHROPIC_FAST,
@@ -22,7 +22,7 @@ from recipebot.backends import (
 )
 from recipebot.config import Config
 from recipebot.llm import Extractor, image_block, text_block
-from recipebot.models import ExtractedRecipe, Ingredient
+from recipebot.models import ExtractedRecipe, Ingredient, RecipePatch
 from recipebot.notion import Vocabulary
 
 FULL = ExtractedRecipe(
@@ -379,3 +379,32 @@ def test_gemini_carries_a_pdf_through_as_inline_data():
 
     assert part.inline_data.mime_type == "application/pdf"
     assert part.inline_data.data == b"%PDF-1.4"
+
+
+def test_anthropic_sends_the_schema_the_caller_asked_for():
+    client = FakeAnthropicClient()
+
+    AnthropicBackend(client).complete("m", "s", [text_block("body")], RecipePatch)
+
+    assert client.messages.calls[0]["output_format"] is RecipePatch
+
+
+def test_gemini_sends_the_schema_the_caller_asked_for():
+    client = FakeGeminiClient()
+
+    GeminiBackend(client).complete("m", "s", [text_block("body")], RecipePatch)
+
+    assert client.models.calls[0]["config"].response_schema is RecipePatch
+
+
+# Gemini rejects a response schema it cannot express, so the all-optional patch
+# model has to survive the SDK's own conversion before it is ever sent.
+def test_the_patch_schema_survives_geminis_own_conversion():
+    schema = types.Schema.from_json_schema(
+        json_schema=types.JSONSchema(**RecipePatch.model_json_schema())
+    )
+
+    # Against ExtractedRecipe, not against RecipePatch itself: the point is
+    # that every extracted field stays correctable.
+    assert set(schema.properties) == set(ExtractedRecipe.model_fields)
+    assert all(prop.nullable for prop in schema.properties.values())

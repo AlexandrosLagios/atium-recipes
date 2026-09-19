@@ -23,10 +23,12 @@ configuration, not code: `LLM_PROVIDER` selects `gemini` or `anthropic`, and
 `LLM_MODEL_FAST` and `LLM_MODEL_STRONG` override the ids. The current default
 is Gemini, `gemini-3.1-flash-lite` escalating to `gemini-3.7-flash`.
 
-A high-confidence result writes to Notion at once and the bot replies with the
-page link. A low-confidence result produces a preview message with Save and
-Discard buttons and writes nothing until the user taps Save. Previews live in
-memory; a restart forgets them and the user re-shares.
+Every result produces a preview message with Save and Discard buttons, and
+writes nothing until the user taps Save. The preview is also the one place a
+recipe can be corrected: the user replies to it in words, for example
+"servings is 2, not 4", and a second call on the strong model returns a patch
+naming only the fields that change. The preview is then rewritten in place.
+Previews live in memory; a restart forgets them and the user re-shares.
 
 Deployment is one Python service, one docker-compose service, `ffmpeg` and
 `yt-dlp` baked into the image, secrets in a compose env file on the VPS. The
@@ -83,6 +85,8 @@ means not tried.
 - When the model proposes a new ingredient that resembles an existing one, fold
   the question into the preview message. Offer Save, Save-and-merge, Discard.
   Do not create the row first and clean up later.
+- `Corrections` holds the instructions the user replied with, one per line. It
+  is written on every save, so clearing it in Notion clears it here.
 - `Time (min)` is total time including resting. The sample recipe is 745,
   because the pickle rests overnight.
 - Set the source image as the page cover. The Gallery view depends on it.
@@ -96,4 +100,5 @@ means not tried.
 - Query `Source URL` before every write. If the URL exists, never create a
   second page: reply with the existing page link and offer to reimport it,
   by reading the site again or by re-running the extraction over the page's
-  own `Source text`. A reimport rewrites that page in place.
+  own `Source text`. A reimport rewrites that page in place, and re-applies
+  the page's own `Corrections` so a reimport never reverts them.

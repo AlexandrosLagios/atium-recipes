@@ -66,6 +66,12 @@
   },
   "recipes": {
     "properties": {
+      "Corrections": {
+        "description": null,
+        "name": "Corrections",
+        "rich_text": {},
+        "type": "rich_text"
+      },
       "Created time": {
         "created_time": {},
         "description": null,

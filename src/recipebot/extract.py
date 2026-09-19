@@ -59,7 +59,6 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
         source_url=url,
         image_url=scraped.image_url,
         source_text=prompt,
-        high_confidence=True,
     )
     # The scraper read these from structured data, so they beat the model.
     recipe.name = scraped.name or recipe.name

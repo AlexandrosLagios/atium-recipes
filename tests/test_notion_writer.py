@@ -442,3 +442,24 @@ def test_the_source_toggle_splits_long_text_without_losing_or_splitting_a_charac
 
     assert max(utf16_units(chunk) for chunk in chunks) <= RICH_TEXT_LIMIT
     assert "".join(chunks) == text
+
+
+def test_create_recipe_writes_the_corrections_the_user_gave():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(
+        a_recipe(corrections=["servings is 2", "drop the coriander"]), ["p2"], VOCAB
+    )
+
+    spans = client.pages.created[0]["properties"]["Corrections"]["rich_text"]
+    assert spans == _rt("servings is 2\ndrop the coriander")
+
+
+def test_create_recipe_leaves_the_corrections_property_empty_when_there_are_none():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(), ["p2"], VOCAB)
+
+    assert client.pages.created[0]["properties"]["Corrections"]["rich_text"] == []

@@ -72,7 +72,6 @@ def a_recipe(**overrides) -> Recipe:
         method=["Brown."],
         source="Web",
         source_url="https://example.com/braise",
-        high_confidence=True,
     )
     return Recipe(**{**defaults, **overrides})
 
@@ -133,7 +132,9 @@ def test_first_url_finds_the_link_inside_a_shared_message():
 
 
 async def test_a_known_url_offers_a_reimport_and_never_extracts_on_its_own(monkeypatch):
-    store = FakeStore(existing={"id": "page-old", "url": "https://notion.so/old"})
+    store = FakeStore(
+        existing={"id": "page-old", "url": "https://notion.so/old", "properties": {}}
+    )
     called = []
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: called.append(1))
     update = make_update(text="https://redhousespice.com/x/")
@@ -148,31 +149,17 @@ async def test_a_known_url_offers_a_reimport_and_never_extracts_on_its_own(monke
     assert labels == ["Refetch link", "Reuse saved text", "Keep"]
 
 
-async def test_a_high_confidence_recipe_writes_at_once(monkeypatch):
+async def test_a_scraped_recipe_previews_rather_than_saving_at_once(monkeypatch):
     store = FakeStore()
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
     update = make_update(text="https://redhousespice.com/x/")
 
     await bot.on_text(update, make_context(store, object()))
 
-    assert len(store.saved) == 1
-    assert "https://notion.so/new" in update.message.reply_text.call_args[0][0]
-
-
-async def test_a_high_confidence_recipe_saved_meanwhile_reports_already_saved(monkeypatch):
-    class DedupedStore(FakeStore):
-        def save_recipe(self, recipe, vocab, merges=None):
-            self.saved.append(recipe)
-            return "https://notion.so/existing", False
-
-    store = DedupedStore()
-    monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
-    update = make_update(text="https://redhousespice.com/x/")
-
-    await bot.on_text(update, make_context(store, object()))
-
-    reply = update.message.reply_text.call_args[0][0]
-    assert "Already saved: https://notion.so/existing" in reply
+    assert store.saved == []
+    call = update.message.reply_text.call_args
+    assert "Braise" in call[0][0]
+    assert call[1]["reply_markup"] is not None
 
 
 async def test_a_blocked_instagram_url_asks_for_a_screenshot(monkeypatch):
@@ -200,7 +187,7 @@ async def test_an_empty_extraction_says_so(monkeypatch):
     assert "recipe" in update.message.reply_text.call_args[0][0].lower()
 
 
-async def test_a_near_match_forces_the_preview_even_when_high_confidence(monkeypatch):
+async def test_a_near_match_reaches_the_merge_button(monkeypatch):
     store = FakeStore()
     near_match = a_recipe(ingredients=[Ingredient(name="Chiken")])
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: near_match)
@@ -251,7 +238,7 @@ def make_photo_context(store, extractor, data=b"\xff\xd8\xff"):
     return context
 
 
-async def test_a_high_confidence_photo_recipe_writes_at_once(monkeypatch):
+async def test_a_photo_recipe_previews_rather_than_saving_at_once(monkeypatch):
     store = FakeStore()
     monkeypatch.setattr(bot, "from_photo", lambda *a, **k: a_recipe())
     update = make_photo_update(caption="dinner tonight")
@@ -259,8 +246,8 @@ async def test_a_high_confidence_photo_recipe_writes_at_once(monkeypatch):
 
     await bot.on_media(update, context)
 
-    assert len(store.saved) == 1
-    assert "https://notion.so/new" in update.message.reply_text.call_args[0][0]
+    assert store.saved == []
+    assert "Braise" in update.message.reply_text.call_args[0][0]
     context.bot.get_file.assert_awaited_once_with("big")
 
 
@@ -291,7 +278,7 @@ async def test_a_pdf_document_reaches_the_extractor_with_its_own_media_type(monk
     await bot.on_media(update, context)
 
     assert seen["images"] == [(b"\xff\xd8\xff", "application/pdf")]
-    assert len(store.saved) == 1
+    assert store.saved == []
     context.bot.get_file.assert_awaited_once_with("doc")
 
 

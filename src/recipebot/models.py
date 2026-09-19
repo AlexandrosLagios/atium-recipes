@@ -2,7 +2,7 @@ import unicodedata
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, create_model, field_validator
 
 
 # The video id is the whole identity of a YouTube watch URL, so stripping the
@@ -77,6 +77,19 @@ class ExtractedRecipe(BaseModel):
         return first_emoji(value)
 
 
+# Every field optional, so a correction returns only what it changes and the
+# model cannot restate, and so corrupt, a field the user never named. Derived
+# rather than restated, so a field added to ExtractedRecipe never ends up
+# uncorrectable.
+RecipePatch = create_model(
+    "RecipePatch",
+    **{
+        name: (field.annotation | None, None)
+        for name, field in ExtractedRecipe.model_fields.items()
+    },
+)
+
+
 class Recipe(ExtractedRecipe):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -84,7 +97,7 @@ class Recipe(ExtractedRecipe):
     source_url: str = ""
     image_url: str = ""
     source_text: str = ""
-    high_confidence: bool = False
+    corrections: list[str] = []
 
     @field_validator("source_url")
     @classmethod
@@ -100,7 +113,6 @@ class Recipe(ExtractedRecipe):
         source_url: str = "",
         image_url: str = "",
         source_text: str = "",
-        high_confidence: bool = False,
     ) -> "Recipe":
         return cls(
             **extracted.model_dump(),
@@ -108,5 +120,4 @@ class Recipe(ExtractedRecipe):
             source_url=source_url,
             image_url=image_url,
             source_text=source_text,
-            high_confidence=high_confidence,
         )

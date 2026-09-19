@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic import BaseModel
+
 from .config import Config
-from .models import ExtractedRecipe
+from .models import ExtractedRecipe, RecipePatch
 from .notion import Vocabulary
 
-SYSTEM = """You extract exactly one recipe from the material the user shares.
-
-Rules you must follow:
+RULES = """Rules you must follow:
 - Ingredient names are shopping level and singular: what you pick off the shelf, never a plural such as "Chickens". Keep a word that names a different product: "Pork belly", "Ground beef", and "Chicken thigh", never "Pork", "Beef", or "Chicken". Drop a word that only describes the preparation, and put it with the quantity instead: "2 boneless chicken thighs, sliced" is "Chicken thigh" at "2, boneless and sliced".
 - Where the recipe already states a metric figure, use that figure and never compute your own: "1 cup (180 g) red lentils" is "180 g", and "1 14 oz can coconut milk or 400 ml" is "400 ml". Convert only what the recipe leaves in another unit. This covers a metric figure alone: always convert an imperial or a US figure, even where the recipe states it plainly.
 - Quantities are metric, in the quantity field and inside a method step alike. Convert mass to g, or to kg above 1000 g. Convert volume to ml, or to l above 1000 ml. Convert length to cm and temperature to °C. Convert a cup by what it holds: 1 cup of flour is 120 g, 1 cup of butter is 225 g, 1 cup of a liquid is 240 ml.
@@ -29,15 +29,40 @@ Rules you must follow:
 - A method step obeys every quantity rule above, so never copy a measure out of the source unconverted: "Heat oven to 425°F" becomes "Heat the oven to 220°C".
 - A step is an instruction, never a heading the source uses to group its steps: drop "How To Make The Stir-Fry Sauce:" and keep the instructions under it.
 - notes carry the substitutions, the tips, and the storage or serving advice the source gives outside the method. Write one whole sentence each, and take only what the source states. Return an empty list when the source gives none.
-- emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits.
+- emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits."""
 
-If the material does not contain a recipe, return empty ingredients and an empty method."""
+SYSTEM = (
+    "You extract exactly one recipe from the material the user shares.\n\n"
+    + RULES
+    + "\n\nIf the material does not contain a recipe, return empty ingredients and "
+    "an empty method."
+)
+
+# Framed as prohibitions and carrying no worked numbers of its own, because
+# prompt-examples-act-as-attractors records this model reaching for any figure
+# the prompt hands it.
+PATCH_SYSTEM = (
+    "You correct one recipe. The user gives you the recipe as JSON and an "
+    "instruction naming what is wrong with it.\n\n"
+    "Rules that outrank every rule below:\n"
+    "- Return only the fields the instruction changes. Never return a field the "
+    "instruction does not name, not even carrying its current value.\n"
+    "- A figure in the instruction belongs to the field the instruction names "
+    "and to no other. Never carry it into a quantity, a time, or a count the "
+    "instruction says nothing about.\n"
+    "- Return a changed list whole, as it should end up, never only the part "
+    "that moved.\n"
+    "- Return nothing at all when the instruction names no field you can "
+    "change.\n"
+    "- Every rule below still governs how a field you do return is written.\n\n"
+    + RULES
+)
 
 
-def _system_prompt(vocab: Vocabulary) -> str:
+def _system_prompt(vocab: Vocabulary, base: str = SYSTEM) -> str:
     return "\n\n".join(
         [
-            SYSTEM,
+            base,
             "Known ingredient names:\n" + ", ".join(sorted(vocab.ingredients)),
             "Known cuisines: " + ", ".join(vocab.cuisines),
             "Known meals: " + ", ".join(vocab.meals),
@@ -76,9 +101,13 @@ class Backend(Protocol):
     # instead of buying a second call on the stronger model.
     api_error: tuple[type[BaseException], ...]
 
-    def complete(
-        self, model: str, system: str, parts: list[Part]
-    ) -> ExtractedRecipe | None: ...
+    def complete[T: BaseModel](
+        self,
+        model: str,
+        system: str,
+        parts: list[Part],
+        schema: type[T] = ExtractedRecipe,
+    ) -> T | None: ...
 
     def is_rate_limited(self, exc: Exception) -> bool: ...
 
@@ -110,3 +139,24 @@ class Extractor:
             if result and result.ingredients and result.method:
                 return result
         return None
+
+    def patch[R: ExtractedRecipe](
+        self, current: R, instruction: str, vocab: Vocabulary
+    ) -> R | None:
+        """Apply a correction to an already extracted recipe. The strong model
+        runs once and never escalates, because extract's test for a usable
+        parse reads a valid patch, which names a field or two, as a failure."""
+        # Only the extracted fields. Sending source_text back would pay for the
+        # whole page again and hand the model a second set of figures.
+        recipe_json = current.model_dump_json(include=set(ExtractedRecipe.model_fields))
+        result = self.backend.complete(
+            self.backend.strong,
+            _system_prompt(vocab, PATCH_SYSTEM),
+            [text_block(f"Recipe JSON:\n{recipe_json}\n\nCorrection: {instruction}")],
+            RecipePatch,
+        )
+        if result is None:
+            return None
+        changes = result.model_dump(exclude_none=True)
+        # Rebuild rather than model_copy, so every validator runs on the merge.
+        return type(current)(**{**current.model_dump(), **changes})

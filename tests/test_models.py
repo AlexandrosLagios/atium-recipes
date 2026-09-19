@@ -123,12 +123,10 @@ def test_from_extracted_carries_provenance():
         source_url="https://redhousespice.com/overnight-pickled-vegetables/",
         image_url="https://redhousespice.com/cover.jpg",
         source_text="raw body",
-        high_confidence=True,
     )
 
     assert recipe.time_min == 745
     assert recipe.source == "Web"
-    assert recipe.high_confidence is True
     assert recipe.ingredients[0].name == "Cucumber"
     assert recipe.ingredients[0].category == "Vegetables and aromatics"
 

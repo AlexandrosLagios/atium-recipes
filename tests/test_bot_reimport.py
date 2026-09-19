@@ -12,7 +12,12 @@ from recipebot.users import UserRecord
 VOCAB = Vocabulary(
     ingredients={"Chicken": "p1", "Soy sauce": "p3"}, cuisines=[], meals=[], categories=[]
 )
-PAGE = {"id": "page-old", "url": "https://notion.so/old"}
+PAGE = {"id": "page-old", "url": "https://notion.so/old", "properties": {}}
+
+
+def a_page(*corrections: str) -> dict:
+    spans = [{"plain_text": "\n".join(corrections)}] if corrections else []
+    return {**PAGE, "properties": {"Corrections": {"rich_text": spans}}}
 
 
 def a_user_record() -> UserRecord:
@@ -58,7 +63,6 @@ def a_recipe(ingredients=None, **overrides) -> Recipe:
         method=["Brown."],
         source="Web",
         source_url="https://example.com/braise",
-        high_confidence=True,
     )
     return Recipe(**{**defaults, **overrides})
 
@@ -137,6 +141,11 @@ async def test_refetch_reads_the_link_again_and_rewrites_the_same_page(monkeypat
     await bot.on_callback(make_update("refetch:tok"), make_context(store))
 
     assert seen == ["https://example.com/braise"]
+    token, preview = next(iter(bot.PREVIEWS.items()))
+    assert preview.page_id == "page-old"
+
+    await bot.on_callback(make_update(f"save:{token}"), make_context(store))
+
     assert store.saved == []
     assert [page_id for page_id, _, _ in store.updated] == ["page-old"]
 
@@ -159,7 +168,7 @@ async def test_reuse_saved_text_never_reads_the_link(monkeypatch):
     # The page keeps the Source and Source URL it was first saved with.
     assert seen["source"] == "Web"
     assert seen["source_url"] == "https://example.com/braise"
-    assert [page_id for page_id, _, _ in store.updated] == ["page-old"]
+    assert next(iter(bot.PREVIEWS.values())).page_id == "page-old"
 
 
 async def test_reuse_saved_text_says_so_when_the_page_stored_none(monkeypatch):
@@ -196,19 +205,23 @@ async def test_a_forgotten_reimport_says_so_and_writes_nothing():
     assert "again" in update.callback_query.edit_message_text.call_args[0][0].lower()
 
 
-async def test_the_reply_names_the_page_it_reimported(monkeypatch):
+async def test_saving_a_reimport_names_the_page_it_rewrote(monkeypatch):
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
+    store = FakeStore()
     a_pending_reimport()
-    update = make_update("refetch:tok")
 
-    await bot.on_callback(update, make_context(FakeStore()))
+    await bot.on_callback(make_update("refetch:tok"), make_context(store))
+    token = next(iter(bot.PREVIEWS))
+    update = make_update(f"save:{token}")
 
-    assert "Reimported: https://notion.so/old" in update.effective_message.reply_text.call_args[0][0]
+    await bot.on_callback(update, make_context(store))
+
+    assert "Reimported: https://notion.so/old" in update.callback_query.edit_message_text.call_args[0][0]
 
 
 # A near match still asks before it merges, and Save then writes to the same page.
 async def test_a_near_match_previews_first_and_saves_in_place(monkeypatch):
-    recipe = a_recipe([Ingredient(name="Soy Sauces")], high_confidence=False)
+    recipe = a_recipe([Ingredient(name="Soy Sauces")])
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: recipe)
     store = FakeStore()
     a_pending_reimport()
@@ -235,3 +248,85 @@ async def test_a_reimport_that_finds_no_recipe_leaves_the_page_alone(monkeypatch
 
     assert store.updated == []
     assert bot.NO_RECIPE_MESSAGE in update.effective_message.reply_text.call_args[0][0]
+
+
+class FakePatcher:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    def patch(self, current, instruction, vocab):
+        self.calls.append((current, instruction))
+        result = self.result
+        # Extractor.patch rebuilds from the caller's own dump, so the fields a
+        # Recipe adds to an ExtractedRecipe survive the call.
+        return result and result.model_copy(update={"corrections": current.corrections})
+
+
+async def test_a_stored_correction_is_applied_again_on_a_reimport(monkeypatch):
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
+    patcher = FakePatcher(a_recipe(servings=2))
+    store = FakeStore()
+    bot.REIMPORTS["tok"] = bot.Reimport(
+        page_id=PAGE["id"],
+        page_url=PAGE["url"],
+        source_url="https://example.com/braise",
+        corrections=["servings is 2"],
+    )
+
+    await bot.on_callback(make_update("refetch:tok"), make_context(store, patcher))
+
+    assert [instruction for _, instruction in patcher.calls] == ["servings is 2"]
+    preview = next(iter(bot.PREVIEWS.values()))
+    assert preview.recipe.servings == 2
+    assert preview.recipe.corrections == ["servings is 2"]
+
+
+async def test_a_page_with_no_corrections_never_calls_the_patch(monkeypatch):
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
+    patcher = FakePatcher()
+    a_pending_reimport()
+
+    await bot.on_callback(make_update("refetch:tok"), make_context(FakeStore(), patcher))
+
+    assert patcher.calls == []
+
+
+async def test_a_failed_patch_still_carries_the_corrections_to_the_page(monkeypatch):
+    monkeypatch.setattr(bot, "from_url", lambda *a, **k: a_recipe())
+    bot.REIMPORTS["tok"] = bot.Reimport(
+        page_id=PAGE["id"],
+        page_url=PAGE["url"],
+        source_url="https://example.com/braise",
+        corrections=["servings is 2"],
+    )
+
+    await bot.on_callback(make_update("refetch:tok"), make_context(FakeStore(), FakePatcher()))
+
+    assert next(iter(bot.PREVIEWS.values())).recipe.corrections == ["servings is 2"]
+
+
+async def test_the_reimport_prompt_reads_the_corrections_off_the_page():
+    update = type("U", (), {})()
+    update.effective_message = type("M", (), {})()
+    update.effective_message.reply_text = AsyncMock()
+
+    await bot.send_reimport_prompt(
+        a_page("servings is 2", "drop the coriander"),
+        "https://example.com/braise",
+        update,
+    )
+
+    job = next(iter(bot.REIMPORTS.values()))
+    assert job.corrections == ["servings is 2", "drop the coriander"]
+    assert "servings is 2; drop the coriander" in update.effective_message.reply_text.call_args[0][0]
+
+
+async def test_a_page_without_the_corrections_property_reimports_clean():
+    update = type("U", (), {})()
+    update.effective_message = type("M", (), {})()
+    update.effective_message.reply_text = AsyncMock()
+
+    await bot.send_reimport_prompt(PAGE, "https://example.com/braise", update)
+
+    assert next(iter(bot.REIMPORTS.values())).corrections == []
