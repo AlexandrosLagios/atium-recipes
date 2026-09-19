@@ -14,6 +14,12 @@ Sync recipes from URLs, Instagram, and other sources into a Notion database.
    creates a Recipes and an Ingredients database under whatever page they
    share, and confirms in Telegram once it is done.
 
+Share a link the bot already saved and it offers to reimport that page:
+**Refetch link** reads the site again, **Reuse saved text** runs the
+extraction over the text stored on the page, and **Keep** changes nothing.
+A reimport rewrites the page in place, so its rating and its created time
+survive and its body is replaced.
+
 The bot uses Telegram long polling, so it opens no inbound port for
 Telegram traffic. It does open one local port for the Notion OAuth
 callback, proxied over HTTPS by the VPS's shared reverse proxy; see

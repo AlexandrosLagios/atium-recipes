@@ -93,5 +93,7 @@ means not tried.
 - The database holds English. Where a Greek ingredient has no honest English
   equivalent, keep the transliterated term and add a gloss, for example
   `anthotyro (Greek whey cheese)`. Do not substitute an approximate name.
-- Query `Source URL` before every write. If the URL exists, reply with the
-  existing page link and write nothing.
+- Query `Source URL` before every write. If the URL exists, never create a
+  second page: reply with the existing page link and offer to reimport it,
+  by reading the site again or by re-running the extraction over the page's
+  own `Source text`. A reimport rewrites that page in place.
