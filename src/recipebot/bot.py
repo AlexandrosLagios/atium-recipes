@@ -213,20 +213,26 @@ async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
     preview.message_id = sent.message_id
 
 
-def preview_for_reply(message, chat_id: int):
-    """The preview the user replied to, with its token, or None. Scanning the
+def preview_for_reply(message, chat_id: int) -> str:
+    """The token of the preview the user replied to, or "". Scanning the
     handful of live previews beats a second dict keyed by message id, which
     would leak an entry on every Discard."""
     reply_to = getattr(message, "reply_to_message", None)
     if reply_to is None:
-        return None
-    for token, preview in PREVIEWS.items():
-        if (preview.chat_id, preview.message_id) == (chat_id, reply_to.message_id):
-            return token, preview
-    return None
+        return ""
+    target = (chat_id, reply_to.message_id)
+    return next(
+        (
+            token
+            for token, preview in PREVIEWS.items()
+            if (preview.chat_id, preview.message_id) == target
+        ),
+        "",
+    )
 
 
-async def apply_correction(token, preview, instruction, update, context) -> None:
+async def apply_correction(token: str, instruction: str, update, context) -> None:
+    preview = PREVIEWS[token]
     corrected = await asyncio.to_thread(
         context.bot_data["extractor"].patch,
         preview.recipe,
@@ -287,17 +293,15 @@ async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
         source_url=source_url,
         corrections=corrections,
     )
-    carried = (
-        "\n\nBoth also apply your corrections again: " + "; ".join(corrections)
-        if corrections
-        else ""
-    )
-    await update.effective_message.reply_text(
+    prompt = (
         f"Already saved: {page['url']}\n\nReimport it? Refetch link reads the site again. "
         "Reuse saved text runs the extraction over the text already on the page. "
         "Both replace the page body, so anything you wrote there by hand goes."
-        + carried,
-        reply_markup=reimport_markup(token),
+    )
+    if corrections:
+        prompt += "\n\nBoth also apply your corrections again: " + "; ".join(corrections)
+    await update.effective_message.reply_text(
+        prompt, reply_markup=reimport_markup(token)
     )
 
 
@@ -342,10 +346,12 @@ async def on_reimport(action: str, token: str, update, context) -> None:
         # Carried before the patch, so the corrections reach the page again
         # even when the patch call comes back empty.
         recipe.corrections = job.corrections
-        corrected = await asyncio.to_thread(
-            extractor.patch, recipe, "\n".join(job.corrections), vocab
+        recipe = (
+            await asyncio.to_thread(
+                extractor.patch, recipe, "\n".join(job.corrections), vocab
+            )
+            or recipe
         )
-        recipe = corrected or recipe
 
     await _deliver(recipe, vocab, update, page_id=job.page_id)
 
@@ -440,9 +446,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
 
-    found = preview_for_reply(update.message, chat_id)
-    if found is not None:
-        await apply_correction(*found, text, update, context)
+    token = preview_for_reply(update.message, chat_id)
+    if token:
+        await apply_correction(token, text, update, context)
         return
 
     url = first_url(text)

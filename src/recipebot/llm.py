@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic import BaseModel
+
 from .config import Config
 from .models import ExtractedRecipe, RecipePatch
 from .notion import Vocabulary
@@ -99,9 +101,13 @@ class Backend(Protocol):
     # instead of buying a second call on the stronger model.
     api_error: tuple[type[BaseException], ...]
 
-    def complete(
-        self, model: str, system: str, parts: list[Part], schema=ExtractedRecipe
-    ): ...
+    def complete[T: BaseModel](
+        self,
+        model: str,
+        system: str,
+        parts: list[Part],
+        schema: type[T] = ExtractedRecipe,
+    ) -> T | None: ...
 
     def is_rate_limited(self, exc: Exception) -> bool: ...
 
@@ -134,12 +140,12 @@ class Extractor:
                 return result
         return None
 
-    def patch(self, current: ExtractedRecipe, instruction: str, vocab: Vocabulary):
-        """Apply a correction to an already extracted recipe, and return the
-        caller's own type: a Recipe in gives a Recipe out, with the fields
-        Recipe adds carried across. The strong model runs once and never
-        escalates, because extract's test for a usable parse reads a valid
-        patch, which names a field or two, as a failure."""
+    def patch[R: ExtractedRecipe](
+        self, current: R, instruction: str, vocab: Vocabulary
+    ) -> R | None:
+        """Apply a correction to an already extracted recipe. The strong model
+        runs once and never escalates, because extract's test for a usable
+        parse reads a valid patch, which names a field or two, as a failure."""
         # Only the extracted fields. Sending source_text back would pay for the
         # whole page again and hand the model a second set of figures.
         recipe_json = current.model_dump_json(include=set(ExtractedRecipe.model_fields))

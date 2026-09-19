@@ -404,5 +404,7 @@ def test_the_patch_schema_survives_geminis_own_conversion():
         json_schema=types.JSONSchema(**RecipePatch.model_json_schema())
     )
 
-    assert set(schema.properties) == set(RecipePatch.model_fields)
+    # Against ExtractedRecipe, not against RecipePatch itself: the point is
+    # that every extracted field stays correctable.
+    assert set(schema.properties) == set(ExtractedRecipe.model_fields)
     assert all(prop.nullable for prop in schema.properties.values())

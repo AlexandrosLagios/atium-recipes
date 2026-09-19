@@ -187,7 +187,7 @@ async def test_an_empty_extraction_says_so(monkeypatch):
     assert "recipe" in update.message.reply_text.call_args[0][0].lower()
 
 
-async def test_a_near_match_forces_the_preview_even_when_high_confidence(monkeypatch):
+async def test_a_near_match_reaches_the_merge_button(monkeypatch):
     store = FakeStore()
     near_match = a_recipe(ingredients=[Ingredient(name="Chiken")])
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: near_match)

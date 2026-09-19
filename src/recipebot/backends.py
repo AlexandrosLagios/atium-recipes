@@ -2,6 +2,7 @@ import base64
 
 import anthropic
 import pydantic
+from pydantic import BaseModel
 from google import genai
 from google.genai import errors, types
 
@@ -50,9 +51,13 @@ class AnthropicBackend:
         self.fast = fast
         self.strong = strong
 
-    def complete(
-        self, model: str, system: str, parts: list[Part], schema=ExtractedRecipe
-    ):
+    def complete[T: BaseModel](
+        self,
+        model: str,
+        system: str,
+        parts: list[Part],
+        schema: type[T] = ExtractedRecipe,
+    ) -> T | None:
         # Haiku 4.5 rejects output_config.effort with a 400, so never pass it.
         try:
             response = self.client.messages.parse(
@@ -94,9 +99,13 @@ class GeminiBackend:
         self.fast = fast
         self.strong = strong
 
-    def complete(
-        self, model: str, system: str, parts: list[Part], schema=ExtractedRecipe
-    ):
+    def complete[T: BaseModel](
+        self,
+        model: str,
+        system: str,
+        parts: list[Part],
+        schema: type[T] = ExtractedRecipe,
+    ) -> T | None:
         response = self.client.models.generate_content(
             model=model,
             contents=[_gemini_part(p) for p in parts],
