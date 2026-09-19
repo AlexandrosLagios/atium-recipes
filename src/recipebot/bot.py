@@ -86,7 +86,10 @@ class Preview:
     merges: dict[str, str] = field(default_factory=dict)
     # Set when this preview rewrites a page that already exists.
     page_id: str = ""
-    # The message the user replies to in order to correct this preview.
+    # The message the user replies to in order to correct this preview, and
+    # the chat it lives in. A Telegram message id is unique per chat, never
+    # across chats, so two allowed users routinely hold the same one.
+    chat_id: int = 0
     message_id: int = 0
 
 
@@ -197,7 +200,11 @@ def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
 async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
     token = uuid.uuid4().hex
     preview = Preview(
-        recipe=recipe, vocab=vocab, merges=dict(plan.near), page_id=page_id
+        recipe=recipe,
+        vocab=vocab,
+        merges=dict(plan.near),
+        page_id=page_id,
+        chat_id=update.effective_user.id,
     )
     PREVIEWS[token] = preview
     sent = await update.effective_message.reply_text(
@@ -206,7 +213,7 @@ async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
     preview.message_id = sent.message_id
 
 
-def preview_for_reply(message):
+def preview_for_reply(message, chat_id: int):
     """The preview the user replied to, with its token, or None. Scanning the
     handful of live previews beats a second dict keyed by message id, which
     would leak an entry on every Discard."""
@@ -214,7 +221,7 @@ def preview_for_reply(message):
     if reply_to is None:
         return None
     for token, preview in PREVIEWS.items():
-        if preview.message_id == reply_to.message_id:
+        if (preview.chat_id, preview.message_id) == (chat_id, reply_to.message_id):
             return token, preview
     return None
 
@@ -226,6 +233,11 @@ async def apply_correction(token, preview, instruction, update, context) -> None
         instruction,
         preview.vocab,
     )
+    # Saving or discarding during the model call pops the token, and editing
+    # the message now would paint a dead preview over "Saved: <url>".
+    if PREVIEWS.get(token) is not preview:
+        await update.message.reply_text(EXPIRED_MESSAGE)
+        return
     if corrected is None:
         await update.message.reply_text(NO_PATCH_MESSAGE)
         return
@@ -276,7 +288,7 @@ async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
         corrections=corrections,
     )
     carried = (
-        "\n\nYour corrections are applied again: " + "; ".join(corrections)
+        "\n\nBoth also apply your corrections again: " + "; ".join(corrections)
         if corrections
         else ""
     )
@@ -428,7 +440,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
 
-    found = preview_for_reply(update.message)
+    found = preview_for_reply(update.message, chat_id)
     if found is not None:
         await apply_correction(*found, text, update, context)
         return

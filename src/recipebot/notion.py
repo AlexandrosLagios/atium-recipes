@@ -193,6 +193,8 @@ def _recipe_properties(
         # Always written, so clearing the list clears the property: a reimport
         # of a page whose corrections the user deleted in Notion must not put
         # them back.
+        # ponytail: _rt keeps one 2000-unit chunk, so corrections past that are
+        # dropped. Chunk them across several spans if a real page reaches it.
         "Corrections": {
             "rich_text": _rt("\n".join(recipe.corrections)) if recipe.corrections else []
         },

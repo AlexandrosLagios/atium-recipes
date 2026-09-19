@@ -325,7 +325,11 @@ def a_live_preview(recipe=None, message_id=77, token="tok"):
     recipe = recipe or a_recipe()
     plan = reconcile_ingredients(VOCAB, recipe.ingredients)
     bot.PREVIEWS[token] = bot.Preview(
-        recipe=recipe, vocab=VOCAB, merges=dict(plan.near), message_id=message_id
+        recipe=recipe,
+        vocab=VOCAB,
+        merges=dict(plan.near),
+        chat_id=1,
+        message_id=message_id,
     )
     return bot.PREVIEWS[token]
 
@@ -417,3 +421,39 @@ def test_preview_text_tells_the_user_they_can_reply():
     assert "Reply to this message to correct it." in bot.preview_text(
         a_recipe(), IngredientPlan()
     )
+
+
+# A Telegram message id is unique per chat, never across chats, so two allowed
+# users routinely hold the same one at the same time.
+async def test_a_reply_never_reaches_another_users_preview(monkeypatch):
+    monkeypatch.setattr(bot, "from_text", lambda *a, **k: None)
+    a_live_preview(message_id=77, token="theirs")
+    bot.PREVIEWS["theirs"].chat_id = 2
+    patcher = FakePatcher()
+    context = make_text_context(FakeStore(), patcher)
+    context.bot_data["_store"].vocabulary = lambda: VOCAB
+    update = make_reply_update("servings is 2", 77, patcher)
+
+    await bot.on_text(update, context)
+
+    assert patcher.calls == []
+    assert bot.PREVIEWS["theirs"].recipe.corrections == []
+
+
+async def test_a_save_during_the_model_call_is_not_painted_over():
+    preview = a_live_preview()
+
+    class SavingPatcher(FakePatcher):
+        def patch(self, current, instruction, vocab):
+            bot.PREVIEWS.pop("tok")
+            return super().patch(current, instruction, vocab)
+
+    patcher = SavingPatcher(a_recipe(servings=2))
+    context = make_text_context(FakeStore(), patcher)
+    update = make_reply_update("servings is 2", 77, patcher)
+
+    await bot.on_text(update, context)
+
+    assert context.bot.edit_message_text.await_count == 0
+    assert preview.recipe.servings == 4
+    assert bot.EXPIRED_MESSAGE in update.message.reply_text.call_args[0][0]
