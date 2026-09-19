@@ -283,3 +283,137 @@ async def test_a_double_tap_on_save_writes_the_recipe_only_once():
     ]
     assert sum("Saved" in reply for reply in replies) == 1
     assert sum(bot.EXPIRED_MESSAGE in reply for reply in replies) == 1
+
+
+class FakePatcher:
+    """Stands in for Extractor: returns each queued patched recipe in turn."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = []
+
+    def patch(self, current, instruction, vocab):
+        self.calls.append((current, instruction))
+        result = self.results.pop(0)
+        # Extractor.patch rebuilds from the caller's own dump, so the fields a
+        # Recipe adds to an ExtractedRecipe survive the call.
+        return result and result.model_copy(update={"corrections": current.corrections})
+
+
+def make_reply_update(text, reply_to_message_id, patcher):
+    update = type("U", (), {})()
+    update.effective_user = type("User", (), {"id": 1})()
+    message = type("M", (), {})()
+    message.text = text
+    message.reply_to_message = type("R", (), {"message_id": reply_to_message_id})()
+    message.reply_text = AsyncMock()
+    update.message = message
+    update.effective_message = message
+    update.callback_query = None
+    return update
+
+
+def make_text_context(store, patcher):
+    context = make_context(store)
+    context.bot_data["extractor"] = patcher
+    context.bot = type("B", (), {})()
+    context.bot.edit_message_text = AsyncMock()
+    return context
+
+
+def a_live_preview(recipe=None, message_id=77, token="tok"):
+    recipe = recipe or a_recipe()
+    plan = reconcile_ingredients(VOCAB, recipe.ingredients)
+    bot.PREVIEWS[token] = bot.Preview(
+        recipe=recipe, vocab=VOCAB, merges=dict(plan.near), message_id=message_id
+    )
+    return bot.PREVIEWS[token]
+
+
+async def test_a_reply_to_a_preview_corrects_it_in_place():
+    preview = a_live_preview()
+    original = preview.recipe
+    patcher = FakePatcher(a_recipe(servings=2))
+    context = make_text_context(FakeStore(), patcher)
+
+    await bot.on_text(make_reply_update("servings is 2", 77, patcher), context)
+
+    assert patcher.calls == [(original, "servings is 2")]
+    assert preview.recipe.servings == 2
+    assert preview.recipe.corrections == ["servings is 2"]
+    edit = context.bot.edit_message_text.call_args
+    assert edit[1]["message_id"] == 77
+    assert "2 servings" in edit[0][0]
+    assert "Corrections: servings is 2" in edit[0][0]
+
+
+async def test_a_second_correction_keeps_the_first():
+    a_live_preview(a_recipe(corrections=["servings is 2"], servings=2))
+    patcher = FakePatcher(a_recipe(servings=2, time_min=30))
+    context = make_text_context(FakeStore(), patcher)
+
+    await bot.on_text(make_reply_update("it takes 30 minutes", 77, patcher), context)
+
+    assert bot.PREVIEWS["tok"].recipe.corrections == ["servings is 2", "it takes 30 minutes"]
+
+
+async def test_a_correction_that_changes_nothing_is_not_stored():
+    preview = a_live_preview()
+    patcher = FakePatcher(a_recipe())
+    context = make_text_context(FakeStore(), patcher)
+    update = make_reply_update("make it better", 77, patcher)
+
+    await bot.on_text(update, context)
+
+    assert preview.recipe.corrections == []
+    assert context.bot.edit_message_text.await_count == 0
+    assert "changed nothing" in update.message.reply_text.call_args[0][0]
+
+
+async def test_a_correction_the_model_could_not_apply_leaves_the_preview():
+    preview = a_live_preview()
+    patcher = FakePatcher(None)
+    context = make_text_context(FakeStore(), patcher)
+    update = make_reply_update("???", 77, patcher)
+
+    await bot.on_text(update, context)
+
+    assert bot.PREVIEWS["tok"] is preview
+    assert context.bot.edit_message_text.await_count == 0
+    assert "could not apply" in update.message.reply_text.call_args[0][0]
+
+
+async def test_a_correction_that_renames_an_ingredient_rebuilds_the_merge_map():
+    a_live_preview()
+    patcher = FakePatcher(a_recipe([Ingredient(name="Soy Sauces")]))
+    context = make_text_context(FakeStore(), patcher)
+
+    await bot.on_text(make_reply_update("it is soy sauce, not chicken", 77, patcher), context)
+
+    assert bot.PREVIEWS["tok"].merges == {"Soy Sauces": "Soy sauce"}
+    labels = [
+        b.text
+        for row in context.bot.edit_message_text.call_args[1]["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert "Save and merge" in labels
+
+
+async def test_a_reply_to_anything_else_is_a_new_recipe(monkeypatch):
+    a_live_preview()
+    monkeypatch.setattr(bot, "from_text", lambda *a, **k: None)
+    patcher = FakePatcher()
+    context = make_text_context(FakeStore(), patcher)
+    context.bot_data["_store"].vocabulary = lambda: VOCAB
+    update = make_reply_update("a recipe for soup", 999, patcher)
+
+    await bot.on_text(update, context)
+
+    assert patcher.calls == []
+    assert bot.NO_RECIPE_MESSAGE in update.message.reply_text.call_args[0][0]
+
+
+def test_preview_text_tells_the_user_they_can_reply():
+    assert "Reply to this message to correct it." in bot.preview_text(
+        a_recipe(), IngredientPlan()
+    )

@@ -77,6 +77,22 @@ class ExtractedRecipe(BaseModel):
         return first_emoji(value)
 
 
+# Every field optional, so a correction returns only what it changes and the
+# model cannot restate, and so corrupt, a field the user never named.
+class RecipePatch(BaseModel):
+    name: str | None = None
+    cuisine: str | None = None
+    meal: list[str] | None = None
+    difficulty: Literal["Easy", "Hard"] | None = None
+    time_min: int | None = None
+    keeps_days: int | None = None
+    servings: int | None = None
+    ingredients: list[Ingredient] | None = None
+    method: list[str] | None = None
+    notes: list[str] | None = None
+    emoji: str | None = None
+
+
 class Recipe(ExtractedRecipe):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -84,7 +100,7 @@ class Recipe(ExtractedRecipe):
     source_url: str = ""
     image_url: str = ""
     source_text: str = ""
-    high_confidence: bool = False
+    corrections: list[str] = []
 
     @field_validator("source_url")
     @classmethod
@@ -100,7 +116,6 @@ class Recipe(ExtractedRecipe):
         source_url: str = "",
         image_url: str = "",
         source_text: str = "",
-        high_confidence: bool = False,
     ) -> "Recipe":
         return cls(
             **extracted.model_dump(),
@@ -108,5 +123,4 @@ class Recipe(ExtractedRecipe):
             source_url=source_url,
             image_url=image_url,
             source_text=source_text,
-            high_confidence=high_confidence,
         )

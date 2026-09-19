@@ -1,7 +1,7 @@
 import pytest
 
 from recipebot.llm import Extractor, ImagePart, TextPart, image_block, text_block
-from recipebot.models import ExtractedRecipe, Ingredient
+from recipebot.models import ExtractedRecipe, Ingredient, Recipe, RecipePatch
 from recipebot.notion import Vocabulary
 
 VOCAB = Vocabulary(
@@ -46,11 +46,13 @@ class FakeBackend:
         self.models = []
         self.systems = []
         self.parts = []
+        self.schemas = []
 
-    def complete(self, model, system, parts):
+    def complete(self, model, system, parts, schema=ExtractedRecipe):
         self.models.append(model)
         self.systems.append(system)
         self.parts.append(parts)
+        self.schemas.append(schema)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -181,3 +183,65 @@ def test_image_block_keeps_the_raw_bytes_and_the_media_type():
 
     assert part == ImagePart(b"\x89PNG", "image/png")
     assert part.data == b"\x89PNG"
+
+
+RECIPE = Recipe.from_extracted(
+    FULL, source="Web", source_url="https://example.com/p", source_text="the page"
+)
+
+
+def test_a_patch_changes_only_the_fields_it_set():
+    backend = FakeBackend([RecipePatch(servings=2)])
+
+    result = Extractor(backend).patch(FULL, "servings is 2, not 4", VOCAB)
+
+    assert result == FULL.model_copy(update={"servings": 2})
+
+
+def test_a_patch_over_a_recipe_keeps_the_fields_a_recipe_adds():
+    backend = FakeBackend([RecipePatch(servings=2)])
+
+    result = Extractor(backend).patch(RECIPE, "servings is 2", VOCAB)
+
+    assert isinstance(result, Recipe)
+    assert result.source_url == "https://example.com/p"
+    assert result.source_text == "the page"
+    assert result.servings == 2
+
+
+def test_a_patch_runs_once_on_the_strong_model():
+    backend = FakeBackend([RecipePatch(servings=2)])
+
+    Extractor(backend).patch(FULL, "servings is 2", VOCAB)
+
+    assert backend.models == [STRONG]
+    assert backend.schemas == [RecipePatch]
+
+
+def test_no_patch_at_all_returns_none():
+    backend = FakeBackend([None])
+
+    assert Extractor(backend).patch(FULL, "make it better", VOCAB) is None
+    assert backend.models == [STRONG]
+
+
+def test_the_patch_call_carries_the_recipe_the_instruction_and_the_vocabulary():
+    backend = FakeBackend([RecipePatch(servings=2)])
+
+    Extractor(backend).patch(RECIPE, "servings is 2", VOCAB)
+
+    sent = backend.parts[0][0].text
+    assert '"servings":4' in sent.replace(" ", "")
+    assert "servings is 2" in sent
+    assert "Chicken" in backend.systems[0]
+    # The stored source text is already extracted, so re-sending it would pay
+    # for the whole page again and hand the model a second set of numbers.
+    assert "the page" not in sent
+
+
+def test_a_patch_that_empties_a_list_is_applied():
+    backend = FakeBackend([RecipePatch(method=["Salt."])])
+
+    result = Extractor(backend).patch(FULL, "drop the resting step", VOCAB)
+
+    assert result.method == ["Salt."]

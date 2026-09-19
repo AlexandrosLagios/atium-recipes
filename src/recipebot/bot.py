@@ -24,7 +24,13 @@ from .config import Config
 from .extract import from_photo, from_text, from_url, source_for
 from .llm import Extractor
 from .models import Recipe
-from .notion import IngredientPlan, NotionStore, Vocabulary, reconcile_ingredients
+from .notion import (
+    IngredientPlan,
+    NotionStore,
+    Vocabulary,
+    corrections_of,
+    reconcile_ingredients,
+)
 from .social import SocialBlocked
 from .users import UserRecord
 
@@ -58,6 +64,10 @@ PREVIEWS: dict[str, "Preview"] = {}
 REIMPORTS: dict[str, "Reimport"] = {}
 
 EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
+NO_PATCH_MESSAGE = (
+    'I could not apply that. Try naming the field, for example "servings is 2".'
+)
+NO_CHANGE_MESSAGE = "That changed nothing."
 NO_SOURCE_TEXT_MESSAGE = (
     "That page has no saved source text. Tap Refetch link to read the site again."
 )
@@ -76,6 +86,8 @@ class Preview:
     merges: dict[str, str] = field(default_factory=dict)
     # Set when this preview rewrites a page that already exists.
     page_id: str = ""
+    # The message the user replies to in order to correct this preview.
+    message_id: int = 0
 
 
 @dataclass
@@ -83,6 +95,7 @@ class Reimport:
     page_id: str
     page_url: str
     source_url: str
+    corrections: list[str] = field(default_factory=list)
 
 
 def first_url(text: str) -> str:
@@ -153,19 +166,6 @@ def write_recipe(store, recipe: Recipe, vocab, merges: dict[str, str], page_id: 
     return f"Saved: {url}" if created else f"Already saved: {url}"
 
 
-async def handle_recipe(
-    recipe: Recipe, chat_id: int, context, vocab, update, page_id: str = ""
-) -> None:
-    plan = reconcile_ingredients(vocab, recipe.ingredients)
-    if recipe.high_confidence and not plan.near:
-        message = await call_with_reconnect(
-            chat_id, context, lambda store: write_recipe(store, recipe, vocab, {}, page_id)
-        )
-        await update.effective_message.reply_text(message)
-        return
-    await send_preview(recipe, plan, vocab, update, page_id)
-
-
 def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
     lines = [
         recipe.name,
@@ -179,6 +179,10 @@ def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
         lines.append("New ingredient rows: " + ", ".join(plan.new))
     for proposed, resembles in plan.near.items():
         lines.append(f'"{proposed}" looks like the existing "{resembles}".')
+    if recipe.corrections:
+        lines.append("Corrections: " + "; ".join(recipe.corrections))
+    lines.append("")
+    lines.append("Reply to this message to correct it.")
     return "\n".join(lines)
 
 
@@ -192,11 +196,58 @@ def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
 
 async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
     token = uuid.uuid4().hex
-    PREVIEWS[token] = Preview(
+    preview = Preview(
         recipe=recipe, vocab=vocab, merges=dict(plan.near), page_id=page_id
     )
-    await update.effective_message.reply_text(
+    PREVIEWS[token] = preview
+    sent = await update.effective_message.reply_text(
         preview_text(recipe, plan), reply_markup=preview_markup(token, plan)
+    )
+    preview.message_id = sent.message_id
+
+
+def preview_for_reply(message):
+    """The preview the user replied to, with its token, or None. Scanning the
+    handful of live previews beats a second dict keyed by message id, which
+    would leak an entry on every Discard."""
+    reply_to = getattr(message, "reply_to_message", None)
+    if reply_to is None:
+        return None
+    for token, preview in PREVIEWS.items():
+        if preview.message_id == reply_to.message_id:
+            return token, preview
+    return None
+
+
+async def apply_correction(token, preview, instruction, update, context) -> None:
+    corrected = await asyncio.to_thread(
+        context.bot_data["extractor"].patch,
+        preview.recipe,
+        instruction,
+        preview.vocab,
+    )
+    if corrected is None:
+        await update.message.reply_text(NO_PATCH_MESSAGE)
+        return
+    # Compare before recording the instruction, or the two can never be equal.
+    # An instruction that changed nothing must not be stored, both because a
+    # reimport would re-apply it forever and because editing a message to its
+    # own text is a BadRequest.
+    if corrected == preview.recipe:
+        await update.message.reply_text(NO_CHANGE_MESSAGE)
+        return
+    corrected.corrections = [*corrected.corrections, instruction]
+    # A correction can add or rename an ingredient, so the plan is stale.
+    plan = reconcile_ingredients(preview.vocab, corrected.ingredients)
+    preview.recipe = corrected
+    preview.merges = dict(plan.near)
+    # Edited in place, so the token and the message id hold and the user
+    # corrects again by replying to the same message.
+    await context.bot.edit_message_text(
+        preview_text(corrected, plan),
+        chat_id=update.effective_user.id,
+        message_id=preview.message_id,
+        reply_markup=preview_markup(token, plan),
     )
 
 
@@ -217,13 +268,23 @@ def reimport_markup(token: str) -> InlineKeyboardMarkup:
 
 async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
     token = uuid.uuid4().hex
+    corrections = corrections_of(page)
     REIMPORTS[token] = Reimport(
-        page_id=page["id"], page_url=page["url"], source_url=source_url
+        page_id=page["id"],
+        page_url=page["url"],
+        source_url=source_url,
+        corrections=corrections,
+    )
+    carried = (
+        "\n\nYour corrections are applied again: " + "; ".join(corrections)
+        if corrections
+        else ""
     )
     await update.effective_message.reply_text(
         f"Already saved: {page['url']}\n\nReimport it? Refetch link reads the site again. "
         "Reuse saved text runs the extraction over the text already on the page. "
-        "Both replace the page body, so anything you wrote there by hand goes.",
+        "Both replace the page body, so anything you wrote there by hand goes."
+        + carried,
         reply_markup=reimport_markup(token),
     )
 
@@ -265,7 +326,16 @@ async def on_reimport(action: str, token: str, update, context) -> None:
             source_url=job.source_url,
         )
 
-    await _deliver(recipe, chat_id, context, vocab, update, page_id=job.page_id)
+    if recipe is not None and job.corrections:
+        # Carried before the patch, so the corrections reach the page again
+        # even when the patch call comes back empty.
+        recipe.corrections = job.corrections
+        corrected = await asyncio.to_thread(
+            extractor.patch, recipe, "\n".join(job.corrections), vocab
+        )
+        recipe = corrected or recipe
+
+    await _deliver(recipe, vocab, update, page_id=job.page_id)
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,11 +385,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await query.edit_message_text(message)
 
 
-async def _deliver(recipe_or_none, chat_id: int, context, vocab, update, page_id: str = "") -> None:
-    if recipe_or_none is None:
+async def _deliver(recipe: Recipe | None, vocab, update, page_id: str = "") -> None:
+    if recipe is None:
         await update.effective_message.reply_text(NO_RECIPE_MESSAGE)
         return
-    await handle_recipe(recipe_or_none, chat_id, context, vocab, update, page_id)
+    plan = reconcile_ingredients(vocab, recipe.ingredients)
+    await send_preview(recipe, plan, vocab, update, page_id)
 
 
 async def send_connect_button(update, context) -> None:
@@ -356,6 +427,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
+
+    found = preview_for_reply(update.message)
+    if found is not None:
+        await apply_correction(*found, text, update, context)
+        return
+
     url = first_url(text)
 
     if url:
@@ -374,7 +451,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(BLOCKED_MESSAGE)
         return
 
-    await _deliver(recipe, chat_id, context, vocab, update)
+    await _deliver(recipe, vocab, update)
 
 
 async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -409,7 +486,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         vocab,
         caption=message.caption or "",
     )
-    await _deliver(recipe, chat_id, context, vocab, update)
+    await _deliver(recipe, vocab, update)
 
 
 async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

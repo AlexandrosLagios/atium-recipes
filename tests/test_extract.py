@@ -38,7 +38,7 @@ def test_source_for_recognises_each_host():
     assert extract.source_for("https://redhousespice.com/x/") == "Web"
 
 
-def test_a_scraped_page_is_high_confidence_and_the_scraper_facts_win(monkeypatch):
+def test_the_scraper_facts_win_over_the_model(monkeypatch):
     scraped = ScrapeResult(
         name="Overnight pickled vegetables",
         time_min=745,
@@ -53,7 +53,6 @@ def test_a_scraped_page_is_high_confidence_and_the_scraper_facts_win(monkeypatch
 
     recipe = extract.from_url("https://redhousespice.com/x/?utm=1", stub, VOCAB)
 
-    assert recipe.high_confidence is True
     assert recipe.name == "Overnight pickled vegetables"
     assert recipe.time_min == 745
     assert recipe.servings == 4
@@ -118,14 +117,13 @@ def test_time_min_keeps_the_larger_scraped_figure_over_a_smaller_model_one(monke
     assert recipe.time_min == 745
 
 
-def test_a_page_without_structured_data_is_low_confidence(monkeypatch):
+def test_a_page_without_structured_data_falls_back_to_the_readable_body(monkeypatch):
     monkeypatch.setattr(extract, "fetch_html", lambda url: "<html></html>")
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: None)
     monkeypatch.setattr(extract, "readable_text", lambda html, url: "chicken and onion")
 
     recipe = extract.from_url("https://example.com/stew", StubExtractor(), VOCAB)
 
-    assert recipe.high_confidence is False
     assert recipe.name == "Model title"
     assert recipe.source_text == "chicken and onion"
 
@@ -150,7 +148,6 @@ def test_a_social_url_sends_the_caption_and_the_frames(monkeypatch):
     recipe = extract.from_url("https://www.instagram.com/p/abc/", stub, VOCAB)
 
     assert recipe.source == "Instagram"
-    assert recipe.high_confidence is False
     assert recipe.image_url == "https://cdn/t.jpg"
     assert recipe.source_text == "Best noodles"
     kinds = [type(part) for part in stub.calls[0]]
@@ -186,7 +183,6 @@ def test_from_photo_sends_an_image_block_and_no_source_url():
 
     assert recipe.source == "Photo"
     assert recipe.source_url == ""
-    assert recipe.high_confidence is False
     assert isinstance(stub.calls[0][0], ImagePart)
 
 

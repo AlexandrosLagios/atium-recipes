@@ -51,8 +51,8 @@ class AnthropicBackend:
         self.strong = strong
 
     def complete(
-        self, model: str, system: str, parts: list[Part]
-    ) -> ExtractedRecipe | None:
+        self, model: str, system: str, parts: list[Part], schema=ExtractedRecipe
+    ):
         # Haiku 4.5 rejects output_config.effort with a 400, so never pass it.
         try:
             response = self.client.messages.parse(
@@ -62,7 +62,7 @@ class AnthropicBackend:
                 messages=[
                     {"role": "user", "content": [_anthropic_block(p) for p in parts]}
                 ],
-                output_format=ExtractedRecipe,
+                output_format=schema,
             )
         except pydantic.ValidationError:
             # Output truncated at MAX_TOKENS reaches the SDK's TypeAdapter as
@@ -95,15 +95,15 @@ class GeminiBackend:
         self.strong = strong
 
     def complete(
-        self, model: str, system: str, parts: list[Part]
-    ) -> ExtractedRecipe | None:
+        self, model: str, system: str, parts: list[Part], schema=ExtractedRecipe
+    ):
         response = self.client.models.generate_content(
             model=model,
             contents=[_gemini_part(p) for p in parts],
             config=types.GenerateContentConfig(
                 system_instruction=system,
                 response_mime_type="application/json",
-                response_schema=ExtractedRecipe,
+                response_schema=schema,
                 # This project declares no tools, so the loop only logs on
                 # every call. Disabling it leaves the request bytes unchanged.
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(

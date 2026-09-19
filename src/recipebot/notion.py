@@ -97,6 +97,14 @@ def _title_of(page: dict) -> str:
     return "".join(span["plain_text"] for span in spans).strip()
 
 
+# A database that predates the property has no Corrections on its pages until
+# _backfill adds it, so a missing property reads as no corrections.
+def corrections_of(page: dict) -> list[str]:
+    spans = page["properties"].get("Corrections", {}).get("rich_text", [])
+    text = "".join(span["plain_text"] for span in spans)
+    return [line.strip() for line in text.split("\n") if line.strip()]
+
+
 def _options(schema: dict, prop: str) -> list[str]:
     entry = schema["properties"].get(prop)
     if not entry:
@@ -182,6 +190,12 @@ def _recipe_properties(
         "Time (min)": {"number": recipe.time_min},
         "Servings": {"number": recipe.servings},
         "Ingredients": {"relation": [{"id": pid} for pid in ingredient_page_ids]},
+        # Always written, so clearing the list clears the property: a reimport
+        # of a page whose corrections the user deleted in Notion must not put
+        # them back.
+        "Corrections": {
+            "rich_text": _rt("\n".join(recipe.corrections)) if recipe.corrections else []
+        },
     }
     cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
     if cuisine:
