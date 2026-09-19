@@ -58,7 +58,11 @@ ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a dif
 
 # ponytail: previews live in memory on purpose. A restart forgets them and the
 # user re-shares the link. Persist them only if a restart ever loses real work.
-PREVIEWS: dict[str, "Preview"] = {}
+# Keyed by (chat_id, message_id) of the preview message. A Telegram message id
+# is unique per chat, never across chats, so two allowed users routinely hold
+# the same one, and the id alone would match one user's reply to another user's
+# preview. The chat_id holds effective_user.id, as it does elsewhere here.
+PREVIEWS: dict[tuple[int, int], "Preview"] = {}
 
 # ponytail: reimports live beside the previews, and expire the same way.
 REIMPORTS: dict[str, "Reimport"] = {}
@@ -86,13 +90,6 @@ class Preview:
     merges: dict[str, str] = field(default_factory=dict)
     # Set when this preview rewrites a page that already exists.
     page_id: str = ""
-    # The message the user replies to in order to correct this preview, and
-    # the sender it belongs to. A Telegram message id is unique per chat, never
-    # across chats, so two allowed users routinely hold the same one, and the
-    # id alone would match one user's reply to another user's preview. Holds
-    # effective_user.id, which is what the rest of this module calls chat_id.
-    chat_id: int = 0
-    message_id: int = 0
 
 
 @dataclass
@@ -191,59 +188,43 @@ def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
     return "\n".join(lines)
 
 
-def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
-    row = [InlineKeyboardButton("Save", callback_data=f"save:{token}")]
+def preview_markup(plan: IngredientPlan) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton("Save", callback_data="save")]
     if plan.near:
-        row.append(InlineKeyboardButton("Save and merge", callback_data=f"merge:{token}"))
-    row.append(InlineKeyboardButton("Discard", callback_data=f"drop:{token}"))
+        row.append(InlineKeyboardButton("Save and merge", callback_data="merge"))
+    row.append(InlineKeyboardButton("Discard", callback_data="drop"))
     return InlineKeyboardMarkup([row])
 
 
 async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
-    token = uuid.uuid4().hex
-    preview = Preview(
-        recipe=recipe,
-        vocab=vocab,
-        merges=dict(plan.near),
-        page_id=page_id,
-        chat_id=update.effective_user.id,
-    )
-    PREVIEWS[token] = preview
     sent = await update.effective_message.reply_text(
-        preview_text(recipe, plan), reply_markup=preview_markup(token, plan)
+        preview_text(recipe, plan), reply_markup=preview_markup(plan)
     )
-    preview.message_id = sent.message_id
+    PREVIEWS[(update.effective_user.id, sent.message_id)] = Preview(
+        recipe=recipe, vocab=vocab, merges=dict(plan.near), page_id=page_id
+    )
 
 
-def preview_for_reply(message, chat_id: int) -> str:
-    """The token of the preview the user replied to, or "". Scanning the
-    handful of live previews beats a second dict keyed by message id, which
-    would leak an entry on every Discard."""
+def preview_for_reply(message, chat_id: int) -> tuple[int, int] | None:
+    """The PREVIEWS key of the preview the user replied to, or None."""
     reply_to = getattr(message, "reply_to_message", None)
     if reply_to is None:
-        return ""
-    target = (chat_id, reply_to.message_id)
-    return next(
-        (
-            token
-            for token, preview in PREVIEWS.items()
-            if (preview.chat_id, preview.message_id) == target
-        ),
-        "",
-    )
+        return None
+    key = (chat_id, reply_to.message_id)
+    return key if key in PREVIEWS else None
 
 
-async def apply_correction(token: str, instruction: str, update, context) -> None:
-    preview = PREVIEWS[token]
+async def apply_correction(key: tuple[int, int], instruction: str, update, context) -> None:
+    preview = PREVIEWS[key]
     corrected = await asyncio.to_thread(
         context.bot_data["extractor"].patch,
         preview.recipe,
         instruction,
         preview.vocab,
     )
-    # Saving or discarding during the model call pops the token, and editing
+    # Saving or discarding during the model call pops the preview, and editing
     # the message now would paint a dead preview over "Saved: <url>".
-    if PREVIEWS.get(token) is not preview:
+    if PREVIEWS.get(key) is not preview:
         await update.message.reply_text(EXPIRED_MESSAGE)
         return
     if corrected is None:
@@ -261,13 +242,10 @@ async def apply_correction(token: str, instruction: str, update, context) -> Non
     plan = reconcile_ingredients(preview.vocab, corrected.ingredients)
     preview.recipe = corrected
     preview.merges = dict(plan.near)
-    # Edited in place, so the token and the message id hold and the user
-    # corrects again by replying to the same message.
-    await context.bot.edit_message_text(
-        preview_text(corrected, plan),
-        chat_id=update.effective_user.id,
-        message_id=preview.message_id,
-        reply_markup=preview_markup(token, plan),
+    # Edited in place, so the key holds and the user corrects again by
+    # replying to the same message.
+    await update.message.reply_to_message.edit_text(
+        preview_text(corrected, plan), reply_markup=preview_markup(plan)
     )
 
 
@@ -367,7 +345,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await on_reimport(action, token, update, context)
         return
 
-    preview = PREVIEWS.pop(token, None)
+    chat_id = update.effective_user.id
+    key = (chat_id, query.message.message_id)
+    preview = PREVIEWS.pop(key, None)
     if preview is None:
         await query.edit_message_text(EXPIRED_MESSAGE)
         return
@@ -377,7 +357,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     merges = preview.merges if action == "merge" else {}
-    chat_id = update.effective_user.id
     try:
         message = await call_with_reconnect(
             chat_id,
@@ -391,15 +370,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.edit_message_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
         return
     except Exception:
-        PREVIEWS[token] = preview
-        log.exception("save_recipe failed for token %s", token)
+        PREVIEWS[key] = preview
+        log.exception("save_recipe failed for %s", key)
         # A second failure re-sends identical text and markup, which Telegram
         # rejects as unmodified. Swallowing it keeps the error handler from
         # posting a second, less useful message on top.
         with contextlib.suppress(BadRequest):
             await query.edit_message_text(
                 "Saving failed. Tap Save to try again.",
-                reply_markup=preview_markup(token, IngredientPlan(near=preview.merges)),
+                reply_markup=preview_markup(IngredientPlan(near=preview.merges)),
             )
         return
     await query.edit_message_text(message)
@@ -448,9 +427,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
 
-    token = preview_for_reply(update.message, chat_id)
-    if token:
-        await apply_correction(token, text, update, context)
+    key = preview_for_reply(update.message, chat_id)
+    if key is not None:
+        await apply_correction(key, text, update, context)
         return
 
     url = first_url(text)
