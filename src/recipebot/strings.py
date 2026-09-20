@@ -148,6 +148,42 @@ TEXT = {
         "el": "Ο σύνδεσμος έληξε. Άνοιξε το Telegram και στείλε ένα μήνυμα για να συνδεθείς ξανά.",
     },
     "page_connected": {"en": "Connected. Go back to Telegram.", "el": "Συνδέθηκε. Γύρνα στο Telegram."},
+    "owner_only": {
+        "en": "That command is for the bot owner only.",
+        "el": "Αυτή η εντολή είναι μόνο για τον ιδιοκτήτη του bot.",
+    },
+    "bad_user_id": {
+        "en": "Send a numeric Telegram user id, like /allow 6529645381.",
+        "el": "Στείλε ένα αριθμητικό αναγνωριστικό χρήστη Telegram, για παράδειγμα /allow 6529645381.",
+    },
+    "already_allowed": {
+        "en": "{user_id} is already allowed.",
+        "el": "Το {user_id} έχει ήδη πρόσβαση.",
+    },
+    "allowed_now": {
+        "en": "Allowed {user_id}. They can message the bot now.",
+        "el": "Δόθηκε πρόσβαση στο {user_id}. Μπορεί τώρα να στείλει μήνυμα στο bot.",
+    },
+    "deny_owner": {
+        "en": "That is the owner id. Refusing to lock you out.",
+        "el": "Αυτό είναι το αναγνωριστικό του ιδιοκτήτη. Δεν το αφαιρώ, για να μη μείνεις έξω.",
+    },
+    "deny_env_id": {
+        "en": "{user_id} comes from TELEGRAM_ALLOWED_USER_IDS. Remove it there and restart the bot.",
+        "el": "Το {user_id} προέρχεται από το TELEGRAM_ALLOWED_USER_IDS. Αφαίρεσέ το εκεί και επανεκκίνησε το bot.",
+    },
+    "not_allowed": {
+        "en": "{user_id} is not allowed.",
+        "el": "Το {user_id} δεν έχει πρόσβαση.",
+    },
+    "denied": {
+        "en": "Denied {user_id}.",
+        "el": "Αφαιρέθηκε η πρόσβαση για το {user_id}.",
+    },
+    "allowed_list": {
+        "en": "Allowed users:\n{lines}",
+        "el": "Χρήστες με πρόσβαση:\n{lines}",
+    },
     "page_failed": {
         "en": "Something went wrong. Check Telegram for what to do next.",
         "el": "Κάτι πήγε στραβά. Δες στο Telegram τι να κάνεις.",

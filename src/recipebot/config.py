@@ -13,6 +13,7 @@ PROVIDER_KEYS = {
 _VARS = [
     "TELEGRAM_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS",
+    "TELEGRAM_OWNER_ID",
     "NOTION_CLIENT_ID",
     "NOTION_CLIENT_SECRET",
     "NOTION_REDIRECT_URI",
@@ -25,12 +26,18 @@ def _parse_allowed_ids(raw: str) -> frozenset[int]:
         part = part.strip()
         if not part:
             continue
-        if not part.lstrip("-").isdigit() or part.count("-") > 1:
+        if not part.lstrip("-").isdecimal() or part.count("-") > 1:
             raise RuntimeError(f"TELEGRAM_ALLOWED_USER_IDS contains a non-integer id: {part!r}")
         ids.append(int(part))
     if not ids:
         raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS must list at least one Telegram user id")
     return frozenset(ids)
+
+
+def _parse_owner_id(raw: str) -> int:
+    if not raw.strip().isdecimal():
+        raise RuntimeError(f"TELEGRAM_OWNER_ID is not a Telegram user id: {raw!r}")
+    return int(raw)
 
 
 @dataclass(frozen=True)
@@ -44,6 +51,7 @@ class Config:
     db_path: str
     llm_provider: str
     llm_api_key: str = field(repr=False)
+    owner_id: int = 0
     model_fast: str = ""
     model_strong: str = ""
 
@@ -61,9 +69,13 @@ class Config:
         missing = [name for name in _VARS + [key_var] if not os.environ.get(name)]
         if missing:
             raise RuntimeError(f"missing environment variables: {', '.join(missing)}")
+        owner_id = _parse_owner_id(os.environ["TELEGRAM_OWNER_ID"])
+        # The owner joins the allowlist here rather than being required to
+        # appear in both variables, so editing one can never lock them out.
+        allowed_user_ids = _parse_allowed_ids(os.environ["TELEGRAM_ALLOWED_USER_IDS"]) | {owner_id}
         return cls(
             telegram_token=os.environ["TELEGRAM_TOKEN"],
-            allowed_user_ids=_parse_allowed_ids(os.environ["TELEGRAM_ALLOWED_USER_IDS"]),
+            allowed_user_ids=allowed_user_ids,
             notion_client_id=os.environ["NOTION_CLIENT_ID"],
             notion_client_secret=os.environ["NOTION_CLIENT_SECRET"],
             notion_redirect_uri=os.environ["NOTION_REDIRECT_URI"],
@@ -71,6 +83,7 @@ class Config:
             db_path=os.environ.get("DB_PATH", DEFAULT_DB_PATH),
             llm_provider=provider,
             llm_api_key=os.environ[key_var],
+            owner_id=owner_id,
             model_fast=os.environ.get("LLM_MODEL_FAST", ""),
             model_strong=os.environ.get("LLM_MODEL_STRONG", ""),
         )

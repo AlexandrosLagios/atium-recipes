@@ -82,6 +82,23 @@ Deploy by hand, for a commit the checks never covered:
 cd ~/apps/recipeient && git pull && docker compose up -d --build
 ```
 
+Allow a new Telegram user:
+
+```bash
+deploy/allow-telegram-user.sh <telegram-user-id>
+```
+
+The script appends the id to `TELEGRAM_ALLOWED_USER_IDS` in
+`~/apps/recipeient/.env` and recreates the container. It is idempotent, and it
+refuses an id that is not a number. The allowlist is a trust boundary, so read
+the value back before you tell the user the id is live. The `/allow-telegram-user`
+command runs the same script and checks Tailscale first.
+
+Use this path only to bootstrap or to recover. The owner grants routine access
+by sending `/allow <id>` to the bot, which writes to the `allowed_users` table
+on the `recipebot-data` volume and needs no SSH. That path fails when the bot
+is down, which is what this script is for.
+
 Read the log:
 
 ```bash

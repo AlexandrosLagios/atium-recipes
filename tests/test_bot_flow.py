@@ -31,9 +31,13 @@ def a_user_record(**overrides) -> UserRecord:
 
 
 class FakeUsers:
-    def __init__(self, record=None):
+    def __init__(self, record=None, allowed=()):
         self.record = record
         self.deleted = []
+        self.allowed = frozenset(allowed)
+
+    def allowed_ids(self):
+        return self.allowed
 
     def get(self, telegram_user_id):
         return self.record
@@ -320,6 +324,18 @@ async def test_on_error_replies_to_the_allowed_user():
     update.message.reply_text.assert_awaited_once_with(t("en", "error"))
 
 
+async def test_on_error_replies_to_a_user_allowed_only_in_the_database():
+    update = make_update(text="hi")
+    update.effective_user = type("User", (), {"id": 999})()
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(a_user_record(), allowed={999})
+    context.error = RuntimeError("boom")
+
+    await bot.on_error(update, context)
+
+    update.message.reply_text.assert_awaited_once_with(t("en", "error"))
+
+
 async def test_on_error_stays_silent_for_a_foreign_user():
     update = make_update(text="hi")
     update.effective_user = type("User", (), {"id": 999})()
@@ -428,3 +444,28 @@ async def test_disconnect_deletes_the_row_and_confirms():
 
     assert users.deleted == [1]
     assert "disconnect" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_disconnect_confirms_even_when_the_command_was_an_edit():
+    """A CommandHandler also fires on an edited message, where update.message
+    is None. The row is already deleted by then, so the reply has to survive."""
+    update = make_update(text="/disconnect")
+    update.message = None
+    users = FakeUsers(a_user_record())
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = users
+
+    await bot.on_disconnect(update, context)
+
+    assert users.deleted == [1]
+    assert "disconnect" in update.effective_message.reply_text.call_args[0][0].lower()
+
+
+async def test_start_answers_a_connected_user_even_when_the_command_was_an_edit():
+    update = make_update(text="/start")
+    update.message = None
+    context = make_context(FakeStore(), object())
+
+    await bot.on_start(update, context)
+
+    assert "recipe link" in update.effective_message.reply_text.call_args[0][0]

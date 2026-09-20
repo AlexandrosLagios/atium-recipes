@@ -117,14 +117,21 @@ def first_url(text: str) -> str:
     return match.group() if match else ""
 
 
-def make_gate(allowed_user_ids: frozenset[int]):
+def is_allowed(user_id, allowed_user_ids: frozenset[int], users) -> bool:
+    """The one authorization rule. The environment ids are checked first and
+    never touch the database, so an unreadable database locks out the ids the
+    owner added at runtime but never the owner."""
+    return user_id in allowed_user_ids or user_id in users.allowed_ids()
+
+
+def make_gate(allowed_user_ids: frozenset[int], users):
     async def gate(update, context) -> None:
         seen_id = "unknown"
         try:
             user = getattr(update, "effective_user", None)
             if user is not None:
                 seen_id = user.id
-            allowed = seen_id in allowed_user_ids
+            allowed = is_allowed(seen_id, allowed_user_ids, users)
         except Exception:
             allowed = False
         if not allowed:
@@ -456,7 +463,8 @@ async def send_connect_button(update, context) -> None:
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("handler failed", exc_info=context.error)
     user = getattr(update, "effective_user", None)
-    if user is None or user.id not in context.bot_data["cfg"].allowed_user_ids:
+    cfg = context.bot_data["cfg"]
+    if user is None or not is_allowed(user.id, cfg.allowed_user_ids, context.bot_data["users"]):
         return
     message = getattr(update, "effective_message", None)
     if message is not None:
@@ -468,7 +476,7 @@ async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if record is None:
         await send_connect_button(update, context)
         return
-    await update.message.reply_text(t(record.language, "ready"))
+    await update.effective_message.reply_text(t(record.language, "ready"))
 
 
 async def on_language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -476,7 +484,7 @@ async def on_language_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if record is None:
         await send_connect_button(update, context)
         return
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         t(record.language, "language_prompt"), reply_markup=language_markup()
     )
 
@@ -557,7 +565,73 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     language = language_for(update, context)
     context.bot_data["users"].delete(update.effective_user.id)
-    await update.message.reply_text(t(language, "disconnected"))
+    await update.effective_message.reply_text(t(language, "disconnected"))
+
+
+def _is_owner(update, context) -> bool:
+    return update.effective_user.id == context.bot_data["cfg"].owner_id
+
+
+def _target_id(context) -> int | None:
+    # isdecimal, not isdigit: isdigit accepts superscripts that int() rejects.
+    raw = (context.args or [""])[0]
+    return int(raw) if raw.isdecimal() else None
+
+
+async def on_allow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
+    if not _is_owner(update, context):
+        await update.effective_message.reply_text(t(language, "owner_only"))
+        return
+    target = _target_id(context)
+    if target is None:
+        await update.effective_message.reply_text(t(language, "bad_user_id"))
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    if is_allowed(target, cfg.allowed_user_ids, users):
+        await update.effective_message.reply_text(t(language, "already_allowed", user_id=target))
+        return
+    users.allow(target)
+    log.info("owner %s allowed %s", update.effective_user.id, target)
+    await update.effective_message.reply_text(t(language, "allowed_now", user_id=target))
+
+
+async def on_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
+    if not _is_owner(update, context):
+        await update.effective_message.reply_text(t(language, "owner_only"))
+        return
+    target = _target_id(context)
+    if target is None:
+        await update.effective_message.reply_text(t(language, "bad_user_id"))
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    if target == cfg.owner_id:
+        await update.effective_message.reply_text(t(language, "deny_owner"))
+        return
+    if target in cfg.allowed_user_ids:
+        await update.effective_message.reply_text(t(language, "deny_env_id", user_id=target))
+        return
+    if target not in users.allowed_ids():
+        await update.effective_message.reply_text(t(language, "not_allowed", user_id=target))
+        return
+    users.deny(target)
+    log.info("owner %s denied %s", update.effective_user.id, target)
+    await update.effective_message.reply_text(t(language, "denied", user_id=target))
+
+
+async def on_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
+    if not _is_owner(update, context):
+        await update.effective_message.reply_text(t(language, "owner_only"))
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    lines = [f"{user_id} (env)" for user_id in sorted(cfg.allowed_user_ids)]
+    lines += [str(user_id) for user_id in sorted(users.allowed_ids() - cfg.allowed_user_ids)]
+    await update.effective_message.reply_text(t(language, "allowed_list", lines="\n".join(lines)))
 
 
 def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:
@@ -570,12 +644,15 @@ def build_application(cfg: Config, users, extractor: Extractor, *, post_init=Non
     application.bot_data["extractor"] = extractor
 
     application.add_handler(
-        TypeHandler(Update, make_gate(cfg.allowed_user_ids), block=True), group=-1
+        TypeHandler(Update, make_gate(cfg.allowed_user_ids, users), block=True), group=-1
     )
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
     application.add_handler(CommandHandler("disconnect", on_disconnect))
     application.add_handler(CommandHandler("language", on_language_command))
+    application.add_handler(CommandHandler("allow", on_allow))
+    application.add_handler(CommandHandler("deny", on_deny))
+    application.add_handler(CommandHandler("allowed", on_allowed))
     application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(
         MessageHandler(
