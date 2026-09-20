@@ -4,6 +4,7 @@ import pytest
 
 from recipebot import callback_server, oauth
 from recipebot.config import Config
+from recipebot.strings import t
 from recipebot.users import UserStore
 
 FIXTURE = {
@@ -41,7 +42,7 @@ def test_start_connect_returns_an_authorize_url_and_remembers_the_state():
     assert url.startswith(oauth.AUTHORIZE_URL)
     assert len(callback_server.PENDING) == 1
     state = next(iter(callback_server.PENDING))
-    assert callback_server.PENDING[state] == 42
+    assert callback_server.PENDING[state] == (42, "en")
 
 
 class FakeSearch:
@@ -100,7 +101,10 @@ def server(tmp_path, monkeypatch):
     users = UserStore(str(tmp_path / "users.db"))
     notifications = []
     http_server = callback_server.make_server(
-        cfg, users, FIXTURE, lambda chat_id, text: notifications.append((chat_id, text))
+        cfg,
+        users,
+        FIXTURE,
+        lambda chat_id, text, markup=None: notifications.append((chat_id, text, markup)),
     )
     thread = callback_server.run_in_background(http_server)
     yield http_server, users, notifications
@@ -120,7 +124,7 @@ def _get(server, path):
 
 def test_a_valid_callback_connects_the_user(server):
     http_server, users, notifications = server
-    callback_server.PENDING["state-1"] = 42
+    callback_server.PENDING["state-1"] = (42, "en")
 
     status, body = _get(http_server, "/oauth/callback?code=abc&state=state-1")
 
@@ -128,7 +132,12 @@ def test_a_valid_callback_connects_the_user(server):
     record = users.get(42)
     assert record.notion_access_token == "tok-1"
     assert record.workspace_name == "Alex's Kitchen"
-    assert notifications == [(42, "Connected to 'Kitchen'. Send me a recipe.")]
+    chat_id, text, markup = notifications[0]
+    assert (chat_id, text) == (42, t("en", "connected", page="Kitchen"))
+    assert [b.callback_data for row in markup.inline_keyboard for b in row] == [
+        "lang:en",
+        "lang:el",
+    ]
     assert "state-1" not in callback_server.PENDING
 
 
@@ -140,3 +149,14 @@ def test_an_unknown_state_connects_nobody(server):
     assert status == 200
     assert b"expired" in body.lower()
     assert notifications == []
+
+
+def test_the_language_from_before_the_connect_reaches_the_record(server):
+    http_server, users, notifications = server
+    callback_server.PENDING["state-2"] = (42, "el")
+
+    status, body = _get(http_server, "/oauth/callback?code=abc&state=state-2")
+
+    assert users.get(42).language == "el"
+    assert notifications[0][1] == t("el", "connected", page="Kitchen")
+    assert t("el", "page_connected").encode() in body

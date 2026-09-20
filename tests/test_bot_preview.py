@@ -7,6 +7,7 @@ from recipebot import bot
 from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
+from recipebot.strings import t
 from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(
@@ -122,7 +123,7 @@ def setup_function():
 
 
 def test_preview_text_shows_the_fields_the_user_must_check():
-    text = bot.preview_text(a_recipe(), IngredientPlan())
+    text = bot.preview_text(a_recipe(), IngredientPlan(), "en")
 
     assert "Braise" in text
     assert "90" in text
@@ -132,15 +133,15 @@ def test_preview_text_shows_the_fields_the_user_must_check():
 def test_preview_text_names_the_near_match():
     plan = IngredientPlan(near={"Soy Sauces": "Soy sauce"})
 
-    text = bot.preview_text(a_recipe(), plan)
+    text = bot.preview_text(a_recipe(), plan, "en")
 
     assert "Soy Sauces" in text
     assert "Soy sauce" in text
 
 
 def test_the_merge_button_appears_only_for_a_near_match():
-    without = bot.preview_markup(IngredientPlan())
-    with_near = bot.preview_markup(IngredientPlan(near={"Soy Sauces": "Soy sauce"}))
+    without = bot.preview_markup(IngredientPlan(), "en")
+    with_near = bot.preview_markup(IngredientPlan(near={"Soy Sauces": "Soy sauce"}), "en")
 
     labels = [b.text for row in without.inline_keyboard for b in row]
     assert not any("merge" in label.lower() for label in labels)
@@ -265,7 +266,7 @@ async def test_a_dropped_connection_shows_the_connect_button_instead_of_a_failur
     await bot.on_callback(update, make_context(store))
 
     call = update.callback_query.edit_message_text.call_args
-    assert bot.CONNECT_MESSAGE in call[0][0]
+    assert t("en", "connect") in call[0][0]
     buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
     assert buttons[0].url == "https://notion.example/authorize"
 
@@ -287,7 +288,7 @@ async def test_a_double_tap_on_save_writes_the_recipe_only_once():
         second.callback_query.edit_message_text.call_args[0][0],
     ]
     assert sum("Saved" in reply for reply in replies) == 1
-    assert sum(bot.EXPIRED_MESSAGE in reply for reply in replies) == 1
+    assert sum(t("en", "expired") in reply for reply in replies) == 1
 
 
 class FakePatcher:
@@ -297,7 +298,7 @@ class FakePatcher:
         self.results = list(results)
         self.calls = []
 
-    def patch(self, current, instruction, vocab):
+    def patch(self, current, instruction, vocab, language="en"):
         self.calls.append((current, instruction))
         result = self.results.pop(0)
         # Extractor.patch rebuilds from the caller's own dump, so the fields a
@@ -417,12 +418,12 @@ async def test_a_reply_to_anything_else_is_a_new_recipe(monkeypatch):
     await bot.on_text(update, context)
 
     assert patcher.calls == []
-    assert bot.NO_RECIPE_MESSAGE in update.message.reply_text.call_args[0][0]
+    assert t("en", "no_recipe") in update.message.reply_text.call_args[0][0]
 
 
 def test_preview_text_tells_the_user_they_can_reply():
     assert "Reply to this message to correct it." in bot.preview_text(
-        a_recipe(), IngredientPlan()
+        a_recipe(), IngredientPlan(), "en"
     )
 
 
@@ -446,9 +447,9 @@ async def test_a_save_during_the_model_call_is_not_painted_over():
     preview = a_live_preview()
 
     class SavingPatcher(FakePatcher):
-        def patch(self, current, instruction, vocab):
+        def patch(self, current, instruction, vocab, language="en"):
             bot.PREVIEWS.pop(KEY)
-            return super().patch(current, instruction, vocab)
+            return super().patch(current, instruction, vocab, language)
 
     patcher = SavingPatcher(a_recipe(servings=2))
     context = make_text_context(FakeStore(), patcher)
@@ -458,4 +459,4 @@ async def test_a_save_during_the_model_call_is_not_painted_over():
 
     assert update.message.reply_to_message.edit_text.await_count == 0
     assert preview.recipe.servings == 4
-    assert bot.EXPIRED_MESSAGE in update.message.reply_text.call_args[0][0]
+    assert t("en", "expired") in update.message.reply_text.call_args[0][0]

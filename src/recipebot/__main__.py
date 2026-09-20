@@ -18,8 +18,10 @@ def _build_post_init(cfg, users, fixture):
     async def post_init(application: Application) -> None:
         loop = asyncio.get_running_loop()
 
-        def notify(chat_id: int, text: str) -> None:
-            future = asyncio.run_coroutine_threadsafe(application.bot.send_message(chat_id, text), loop)
+        def notify(chat_id: int, text: str, reply_markup=None) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                application.bot.send_message(chat_id, text, reply_markup=reply_markup), loop
+            )
             future.add_done_callback(
                 lambda f: f.exception() and log.error("notify failed for chat %s: %s", chat_id, f.exception())
             )

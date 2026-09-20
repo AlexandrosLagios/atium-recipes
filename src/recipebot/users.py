@@ -1,6 +1,8 @@
 import sqlite3
 from dataclasses import dataclass
 
+from .strings import DEFAULT as DEFAULT_LANGUAGE
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     telegram_user_id INTEGER PRIMARY KEY,
@@ -9,7 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     recipes_ds TEXT NOT NULL,
     ingredients_ds TEXT NOT NULL,
     workspace_name TEXT NOT NULL,
-    connected_at INTEGER NOT NULL
+    connected_at INTEGER NOT NULL,
+    language TEXT NOT NULL DEFAULT 'en'
 )
 """
 
@@ -21,6 +24,7 @@ _COLUMNS = (
     "ingredients_ds",
     "workspace_name",
     "connected_at",
+    "language",
 )
 
 
@@ -33,6 +37,7 @@ class UserRecord:
     ingredients_ds: str
     workspace_name: str
     connected_at: int
+    language: str = DEFAULT_LANGUAGE
 
 
 class UserStore:
@@ -44,6 +49,13 @@ class UserStore:
         self.db_path = db_path
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(_SCHEMA)
+            # A database written before the language column exists keeps every
+            # row; ALTER fills them with the default rather than dropping them.
+            known = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            if "language" not in known:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"
+                )
 
     def get(self, telegram_user_id: int) -> UserRecord | None:
         with sqlite3.connect(self.db_path) as conn:

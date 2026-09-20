@@ -10,28 +10,30 @@ from notion_client import Client
 from . import oauth
 from .config import Config
 from .notion import create_user_databases
+from .strings import DEFAULT as DEFAULT_LANGUAGE, language_markup, t
 from .users import UserRecord
 
 log = logging.getLogger(__name__)
 
 # ponytail: an in-progress connect attempt is a handful of seconds of state,
 # same lifetime philosophy as bot.PREVIEWS. A restart loses it and the user
-# taps Connect again.
-PENDING: dict[str, int] = {}
+# taps Connect again. Carries the language the user was reading when they
+# tapped Connect, because this thread never sees their Telegram update.
+PENDING: dict[str, tuple[int, str]] = {}
 
 
-def start_connect(telegram_user_id: int, cfg: Config) -> str:
+def start_connect(telegram_user_id: int, cfg: Config, language: str = DEFAULT_LANGUAGE) -> str:
     state = uuid.uuid4().hex
-    PENDING[state] = telegram_user_id
+    PENDING[state] = (telegram_user_id, language)
     return oauth.build_authorize_url(cfg.notion_client_id, cfg.notion_redirect_uri, state)
 
 
-def _handle_connect(cfg, users, fixture, notify, chat_id: int, code: str) -> None:
+def _handle_connect(cfg, users, fixture, notify, chat_id: int, code: str, language: str) -> None:
     tokens = oauth.exchange_code(cfg.notion_client_id, cfg.notion_client_secret, cfg.notion_redirect_uri, code)
     client = Client(auth=tokens.access_token)
     page = oauth.find_shared_page(client)
     if page is None:
-        notify(chat_id, "I didn't see a shared page. Send me a message and try again, and share a page this time.")
+        notify(chat_id, t(language, "no_shared_page"))
         return
     page_id, page_title = page
     recipes_ds, ingredients_ds = create_user_databases(client, page_id, fixture)
@@ -44,9 +46,12 @@ def _handle_connect(cfg, users, fixture, notify, chat_id: int, code: str) -> Non
             ingredients_ds=ingredients_ds,
             workspace_name=tokens.workspace_name,
             connected_at=int(time.time()),
+            language=language,
         )
     )
-    notify(chat_id, f"Connected to '{page_title}'. Send me a recipe.")
+    # The language buttons ride along with the confirmation rather than waiting
+    # for the next message, so the choice is the first thing a new user makes.
+    notify(chat_id, t(language, "connected", page=page_title), language_markup())
 
 
 def _page(message: str) -> bytes:
@@ -59,22 +64,27 @@ def make_server(cfg, users, fixture: dict, notify) -> ThreadingHTTPServer:
             query = parse_qs(urlsplit(self.path).query)
             state = query.get("state", [""])[0]
             code = query.get("code", [""])[0]
-            chat_id = PENDING.pop(state, None)
-            if chat_id is None:
-                self._respond(200, "This link expired. Open Telegram and send a message to connect again.")
+            pending = PENDING.pop(state, None)
+            if pending is None:
+                # Nobody's language is known for a state this server never
+                # issued, so this one page stays in the default language.
+                self._respond(200, t(DEFAULT_LANGUAGE, "page_expired"))
                 return
+            chat_id, language = pending
             try:
-                _handle_connect(cfg, users, fixture, notify, chat_id, code)
+                _handle_connect(cfg, users, fixture, notify, chat_id, code, language)
             except Exception:
                 log.exception("oauth callback failed for chat %s", chat_id)
-                notify(chat_id, "Connecting to Notion failed. Send me a message to try again.")
-                self._respond(200, "Something went wrong. Check Telegram for what to do next.")
+                notify(chat_id, t(language, "connect_failed"))
+                self._respond(200, t(language, "page_failed"))
                 return
-            self._respond(200, "Connected. Go back to Telegram.")
+            self._respond(200, t(language, "page_connected"))
 
         def _respond(self, status: int, message: str) -> None:
             self.send_response(status)
-            self.send_header("Content-Type", "text/html")
+            # _page encodes as UTF-8, and a Greek page renders as mojibake
+            # without the charset, because HTML has no meta tag to fall back on.
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(_page(message))
 

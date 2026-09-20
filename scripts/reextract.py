@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from recipebot.config import DEFAULT_PROVIDER, PROVIDER_KEYS, Config  # noqa: E402
 from recipebot.llm import Extractor, text_block  # noqa: E402
+from recipebot.strings import DEFAULT as DEFAULT_LANGUAGE, LANGUAGES  # noqa: E402
 from recipebot.models import Recipe  # noqa: E402
 from recipebot.notion import (  # noqa: E402
     CHILDREN_LIMIT,
@@ -90,6 +91,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("page_ids", nargs="*", help="limit the run to these pages")
     parser.add_argument("--apply", action="store_true", help="write the rewritten bodies")
+    parser.add_argument(
+        "--language",
+        default=DEFAULT_LANGUAGE,
+        choices=sorted(LANGUAGES),
+        help="the language to write the recipes in",
+    )
     args = parser.parse_args()
 
     client = Client(auth=os.environ["NOTION_TOKEN"])
@@ -122,7 +129,7 @@ def main() -> None:
             print(f"[skip] {title}: no stored source text")
             continue
 
-        extracted = extractor.extract([text_block(source_text)], vocab)
+        extracted = extractor.extract([text_block(source_text)], vocab, args.language)
         if not extracted or not extracted.ingredients or not extracted.method:
             print(f"[skip] {title}: extraction returned nothing usable")
             continue

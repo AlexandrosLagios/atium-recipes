@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from .config import Config
 from .models import ExtractedRecipe, RecipePatch
 from .notion import Vocabulary
+from .strings import DEFAULT as DEFAULT_LANGUAGE
 
 RULES = """Rules you must follow:
 - Ingredient names are shopping level and singular: what you pick off the shelf, never a plural such as "Chickens". Keep a word that names a different product: "Pork belly", "Ground beef", and "Chicken thigh", never "Pork", "Beef", or "Chicken". Drop a word that only describes the preparation, and put it with the quantity instead: "2 boneless chicken thighs, sliced" is "Chicken thigh" at "2, boneless and sliced".
@@ -21,7 +22,6 @@ RULES = """Rules you must follow:
 - Choose meal and ingredient category values from the known options below whenever one fits. A value must never contain a comma.
 - meal holds every option the dish fits, not only the best one: a pasta bake is Lunch and Dinner, a brownie is Dessert and Snack, a cake is Dessert alone.
 - time_min is the total time in minutes including resting, marinating, and chilling. An overnight rest is at least 480 minutes.
-- Write in English. Where a Greek or other non-English ingredient has no honest English equivalent, keep the transliterated term and add a gloss, for example "Anthotyro (Greek whey cheese)". Never substitute an approximate name.
 - keeps_days is how many days the finished dish keeps: in the fridge, or at room temperature for a dish that lives in a jar or a tin, such as cookies or roasted nuts. Use the figure the recipe states. Most recipes state none, so estimate from 3 to 4 days for a cooked dish. A pickled or a marinated dish keeps 5 to 7 days. A dish whose texture fails before it spoils, such as rice noodles or anything fried and crisp, keeps 2 to 3 days. Use 0 when the dish has to be eaten straight away.
 - difficulty is "Easy" unless the recipe needs a technique a home cook would have to practise, in which case it is "Hard".
 - Method steps are whole sentences in order.
@@ -31,17 +31,48 @@ RULES = """Rules you must follow:
 - notes carry the substitutions, the tips, and the storage or serving advice the source gives outside the method. Write one whole sentence each, and take only what the source states. Return an empty list when the source gives none.
 - emoji is exactly one emoji that suits the finished dish, and it becomes the recipe's icon. Prefer the dish itself over an ingredient or a flag. Return an empty string only when no emoji fits."""
 
-SYSTEM = (
-    "You extract exactly one recipe from the material the user shares.\n\n"
-    + RULES
-    + "\n\nIf the material does not contain a recipe, return empty ingredients and "
-    "an empty method."
-)
+# The recipe is written in the user's chosen language, but the select values
+# are the Notion schema's own options, so they stay English whatever the user
+# reads. Snapping a translated category or meal back onto an English option
+# would file half of them under "Staples".
+LANGUAGE_RULES = {
+    "en": (
+        "- Write in English. Where a Greek or other non-English ingredient has no honest "
+        'English equivalent, keep the transliterated term and add a gloss, for example '
+        '"Anthotyro (Greek whey cheese)". Never substitute an approximate name.'
+    ),
+    "el": (
+        "- Write in Greek: the recipe name, the ingredient names, the method steps and "
+        "the notes. Where an ingredient or a dish has no honest Greek name, keep the "
+        'original term and add a gloss in Greek, for example "Miso (ζυμωμένη πάστα '
+        'σόγιας)". Never substitute an approximate name.\n'
+        "- A unit keeps the spelling the rules above give it, so \"200 g\", \"1.5 tbsp\" and "
+        '"190°C" never take a Greek abbreviation. Only the words beside a quantity are '
+        'Greek, such as "μια πρέζα".\n'
+        "- cuisine, meal, difficulty and ingredient category stay in English, spelled the "
+        "way the known options below spell them. They are database values rather than "
+        "text a cook reads, so they are the one exception to the first rule above."
+    ),
+}
+
+
+def system_prompt_for(language: str) -> str:
+    return (
+        "You extract exactly one recipe from the material the user shares.\n\n"
+        + rules_for(language)
+        + "\n\nIf the material does not contain a recipe, return empty ingredients and "
+        "an empty method."
+    )
+
+
+def rules_for(language: str) -> str:
+    return RULES + "\n" + LANGUAGE_RULES.get(language, LANGUAGE_RULES[DEFAULT_LANGUAGE])
+
 
 # Framed as prohibitions and carrying no worked numbers of its own, because
 # prompt-examples-act-as-attractors records this model reaching for any figure
 # the prompt hands it.
-PATCH_SYSTEM = (
+PATCH_PREAMBLE = (
     "You correct one recipe. The user gives you the recipe as JSON and an "
     "instruction naming what is wrong with it.\n\n"
     "Rules that outrank every rule below:\n"
@@ -55,11 +86,14 @@ PATCH_SYSTEM = (
     "- Return nothing at all when the instruction names no field you can "
     "change.\n"
     "- Every rule below still governs how a field you do return is written.\n\n"
-    + RULES
 )
 
 
-def _system_prompt(vocab: Vocabulary, base: str = SYSTEM) -> str:
+def patch_prompt_for(language: str) -> str:
+    return PATCH_PREAMBLE + rules_for(language)
+
+
+def _system_prompt(vocab: Vocabulary, base: str) -> str:
     return "\n\n".join(
         [
             base,
@@ -123,8 +157,10 @@ class Extractor:
 
         return cls(backend_from_config(cfg))
 
-    def extract(self, parts: list[Part], vocab: Vocabulary) -> ExtractedRecipe | None:
-        system = _system_prompt(vocab)
+    def extract(
+        self, parts: list[Part], vocab: Vocabulary, language: str = DEFAULT_LANGUAGE
+    ) -> ExtractedRecipe | None:
+        system = _system_prompt(vocab, system_prompt_for(language))
         models = (self.backend.fast, self.backend.strong)
         for index, model in enumerate(models):
             last = index == len(models) - 1
@@ -141,7 +177,7 @@ class Extractor:
         return None
 
     def patch[R: ExtractedRecipe](
-        self, current: R, instruction: str, vocab: Vocabulary
+        self, current: R, instruction: str, vocab: Vocabulary, language: str = DEFAULT_LANGUAGE
     ) -> R | None:
         """Apply a correction to an already extracted recipe. The strong model
         runs once and never escalates, because extract's test for a usable
@@ -151,7 +187,7 @@ class Extractor:
         recipe_json = current.model_dump_json(include=set(ExtractedRecipe.model_fields))
         result = self.backend.complete(
             self.backend.strong,
-            _system_prompt(vocab, PATCH_SYSTEM),
+            _system_prompt(vocab, patch_prompt_for(language)),
             [text_block(f"Recipe JSON:\n{recipe_json}\n\nCorrection: {instruction}")],
             RecipePatch,
         )

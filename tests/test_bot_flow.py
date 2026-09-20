@@ -11,6 +11,7 @@ from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import Vocabulary
 from recipebot.social import SocialBlocked
+from recipebot.strings import t
 from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(ingredients={"Chicken": "p1"}, cuisines=[], meals=[], categories=[])
@@ -266,7 +267,7 @@ async def test_a_photo_with_no_recipe_says_so(monkeypatch):
 async def test_a_pdf_document_reaches_the_extractor_with_its_own_media_type(monkeypatch):
     seen = {}
 
-    def fake_from_photo(images, extractor, vocab, **kwargs):
+    def fake_from_photo(images, extractor, vocab, language="en", **kwargs):
         seen["images"] = images
         return a_recipe()
 
@@ -293,7 +294,7 @@ async def test_a_document_of_an_unreadable_type_is_refused(monkeypatch, mime_typ
 
     assert store.saved == []
     context.bot.get_file.assert_not_awaited()
-    update.message.reply_text.assert_awaited_once_with(bot.FILE_TYPE_MESSAGE)
+    update.message.reply_text.assert_awaited_once_with(t("en", "file_type"))
 
 
 async def test_a_document_over_the_telegram_limit_is_refused(monkeypatch):
@@ -306,7 +307,7 @@ async def test_a_document_over_the_telegram_limit_is_refused(monkeypatch):
 
     assert store.saved == []
     context.bot.get_file.assert_not_awaited()
-    update.message.reply_text.assert_awaited_once_with(bot.TOO_BIG_MESSAGE)
+    update.message.reply_text.assert_awaited_once_with(t("en", "too_big"))
 
 
 async def test_on_error_replies_to_the_allowed_user():
@@ -316,7 +317,7 @@ async def test_on_error_replies_to_the_allowed_user():
 
     await bot.on_error(update, context)
 
-    update.message.reply_text.assert_awaited_once_with(bot.ERROR_MESSAGE)
+    update.message.reply_text.assert_awaited_once_with(t("en", "error"))
 
 
 async def test_on_error_stays_silent_for_a_foreign_user():
@@ -389,7 +390,7 @@ async def test_start_shows_the_connect_button_when_not_connected(monkeypatch):
     await bot.on_start(update, context)
 
     call = update.message.reply_text.call_args
-    assert bot.CONNECT_MESSAGE in call[0][0]
+    assert t("en", "connect") in call[0][0]
     buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
     assert buttons[0].url == "https://notion.example/authorize"
 
@@ -414,7 +415,7 @@ async def test_a_message_before_connecting_shows_the_connect_button_instead_of_e
     await bot.on_text(update, context)
 
     assert called == []
-    assert bot.CONNECT_MESSAGE in update.message.reply_text.call_args[0][0]
+    assert t("en", "connect") in update.message.reply_text.call_args[0][0]
 
 
 async def test_disconnect_deletes_the_row_and_confirms():
