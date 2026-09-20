@@ -7,6 +7,7 @@ from recipebot import bot
 from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import IngredientPlan, Vocabulary, reconcile_ingredients
+from recipebot.strings import t
 from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(
@@ -83,18 +84,23 @@ class FakeStore:
         return "https://notion.so/new", True
 
 
-def make_query(data):
+# The preview a callback update acts on: user 1, message 77.
+KEY = (1, 77)
+
+
+def make_query(data, message_id):
     query = type("Q", (), {})()
     query.data = data
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
+    query.message = type("M", (), {"message_id": message_id})()
     return query
 
 
-def make_update(data):
+def make_update(data, message_id=77):
     update = type("U", (), {})()
     update.effective_user = type("User", (), {"id": 1})()
-    update.callback_query = make_query(data)
+    update.callback_query = make_query(data, message_id)
     return update
 
 
@@ -117,7 +123,7 @@ def setup_function():
 
 
 def test_preview_text_shows_the_fields_the_user_must_check():
-    text = bot.preview_text(a_recipe(), IngredientPlan())
+    text = bot.preview_text(a_recipe(), IngredientPlan(), "en")
 
     assert "Braise" in text
     assert "90" in text
@@ -127,15 +133,15 @@ def test_preview_text_shows_the_fields_the_user_must_check():
 def test_preview_text_names_the_near_match():
     plan = IngredientPlan(near={"Soy Sauces": "Soy sauce"})
 
-    text = bot.preview_text(a_recipe(), plan)
+    text = bot.preview_text(a_recipe(), plan, "en")
 
     assert "Soy Sauces" in text
     assert "Soy sauce" in text
 
 
 def test_the_merge_button_appears_only_for_a_near_match():
-    without = bot.preview_markup("tok", IngredientPlan())
-    with_near = bot.preview_markup("tok", IngredientPlan(near={"Soy Sauces": "Soy sauce"}))
+    without = bot.preview_markup(IngredientPlan(), "en")
+    with_near = bot.preview_markup(IngredientPlan(near={"Soy Sauces": "Soy sauce"}), "en")
 
     labels = [b.text for row in without.inline_keyboard for b in row]
     assert not any("merge" in label.lower() for label in labels)
@@ -146,14 +152,14 @@ def test_the_merge_button_appears_only_for_a_near_match():
 
 async def test_save_writes_the_recipe_and_clears_the_preview():
     store = FakeStore()
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    update = make_update("save:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save")
 
     await bot.on_callback(update, make_context(store))
 
     assert len(store.saved) == 1
     assert store.saved[0][1] == {}
-    assert "tok" not in bot.PREVIEWS
+    assert KEY not in bot.PREVIEWS
     assert "https://notion.so/new" in update.callback_query.edit_message_text.call_args[0][0]
 
 
@@ -161,8 +167,8 @@ async def test_save_and_merge_passes_the_merge_map():
     store = FakeStore()
     recipe = a_recipe([Ingredient(name="Soy Sauces")])
     plan = reconcile_ingredients(VOCAB, recipe.ingredients)
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=recipe, vocab=VOCAB, merges=plan.near)
-    update = make_update("merge:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=recipe, vocab=VOCAB, merges=plan.near)
+    update = make_update("merge")
 
     await bot.on_callback(update, make_context(store))
 
@@ -171,18 +177,18 @@ async def test_save_and_merge_passes_the_merge_map():
 
 async def test_discard_writes_nothing():
     store = FakeStore()
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    update = make_update("drop:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("drop")
 
     await bot.on_callback(update, make_context(store))
 
     assert store.saved == []
-    assert "tok" not in bot.PREVIEWS
+    assert KEY not in bot.PREVIEWS
 
 
 async def test_a_forgotten_preview_says_so_and_writes_nothing():
     store = FakeStore()
-    update = make_update("save:gone")
+    update = make_update("save", message_id=999)
 
     await bot.on_callback(update, make_context(store))
 
@@ -200,12 +206,12 @@ async def test_save_reports_already_saved_when_the_store_deduped_by_source_url()
             return "https://notion.so/existing", False
 
     store = AlreadySavedStore()
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    update = make_update("save:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save")
 
     await bot.on_callback(update, make_context(store))
 
-    assert "tok" not in bot.PREVIEWS
+    assert KEY not in bot.PREVIEWS
     reply = update.callback_query.edit_message_text.call_args[0][0]
     assert "Already saved: https://notion.so/existing" in reply
 
@@ -225,24 +231,24 @@ async def test_a_save_failure_restores_the_preview_with_a_working_save_button():
 
     store = FlakyStore()
     preview = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    bot.PREVIEWS["tok"] = preview
-    update = make_update("save:tok")
+    bot.PREVIEWS[KEY] = preview
+    update = make_update("save")
 
     await bot.on_callback(update, make_context(store))
 
-    assert bot.PREVIEWS["tok"] is preview
+    assert bot.PREVIEWS[KEY] is preview
     call = update.callback_query.edit_message_text.call_args
     failure_reply = call[0][0]
     assert "failed" in failure_reply.lower()
     assert "save" in failure_reply.lower()
     markup = call.kwargs["reply_markup"]
     buttons = [(b.text, b.callback_data) for row in markup.inline_keyboard for b in row]
-    assert ("Save", "save:tok") in buttons
+    assert ("Save", "save") in buttons
 
-    retry = make_update("save:tok")
+    retry = make_update("save")
     await bot.on_callback(retry, make_context(store))
 
-    assert "tok" not in bot.PREVIEWS
+    assert KEY not in bot.PREVIEWS
     assert len(store.saved) == 1
     assert "https://notion.so/new" in retry.callback_query.edit_message_text.call_args[0][0]
 
@@ -254,22 +260,22 @@ async def test_a_dropped_connection_shows_the_connect_button_instead_of_a_failur
     monkeypatch.setattr(bot, "call_with_reconnect", fake_call_with_reconnect)
     monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
     store = FakeStore()
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    update = make_update("save:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    update = make_update("save")
 
     await bot.on_callback(update, make_context(store))
 
     call = update.callback_query.edit_message_text.call_args
-    assert bot.CONNECT_MESSAGE in call[0][0]
+    assert t("en", "connect") in call[0][0]
     buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
     assert buttons[0].url == "https://notion.example/authorize"
 
 
 async def test_a_double_tap_on_save_writes_the_recipe_only_once():
     store = FakeStore()
-    bot.PREVIEWS["tok"] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
-    first = make_update("save:tok")
-    second = make_update("save:tok")
+    bot.PREVIEWS[KEY] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, merges={})
+    first = make_update("save")
+    second = make_update("save")
 
     await asyncio.gather(
         bot.on_callback(first, make_context(store)),
@@ -282,7 +288,7 @@ async def test_a_double_tap_on_save_writes_the_recipe_only_once():
         second.callback_query.edit_message_text.call_args[0][0],
     ]
     assert sum("Saved" in reply for reply in replies) == 1
-    assert sum(bot.EXPIRED_MESSAGE in reply for reply in replies) == 1
+    assert sum(t("en", "expired") in reply for reply in replies) == 1
 
 
 class FakePatcher:
@@ -292,7 +298,7 @@ class FakePatcher:
         self.results = list(results)
         self.calls = []
 
-    def patch(self, current, instruction, vocab):
+    def patch(self, current, instruction, vocab, language="en"):
         self.calls.append((current, instruction))
         result = self.results.pop(0)
         # Extractor.patch rebuilds from the caller's own dump, so the fields a
@@ -305,7 +311,10 @@ def make_reply_update(text, reply_to_message_id, patcher):
     update.effective_user = type("User", (), {"id": 1})()
     message = type("M", (), {})()
     message.text = text
-    message.reply_to_message = type("R", (), {"message_id": reply_to_message_id})()
+    reply_to = type("R", (), {})()
+    reply_to.message_id = reply_to_message_id
+    reply_to.edit_text = AsyncMock()
+    message.reply_to_message = reply_to
     message.reply_text = AsyncMock()
     update.message = message
     update.effective_message = message
@@ -316,22 +325,14 @@ def make_reply_update(text, reply_to_message_id, patcher):
 def make_text_context(store, patcher):
     context = make_context(store)
     context.bot_data["extractor"] = patcher
-    context.bot = type("B", (), {})()
-    context.bot.edit_message_text = AsyncMock()
     return context
 
 
-def a_live_preview(recipe=None, message_id=77, token="tok"):
+def a_live_preview(recipe=None, key=KEY):
     recipe = recipe or a_recipe()
     plan = reconcile_ingredients(VOCAB, recipe.ingredients)
-    bot.PREVIEWS[token] = bot.Preview(
-        recipe=recipe,
-        vocab=VOCAB,
-        merges=dict(plan.near),
-        chat_id=1,
-        message_id=message_id,
-    )
-    return bot.PREVIEWS[token]
+    bot.PREVIEWS[key] = bot.Preview(recipe=recipe, vocab=VOCAB, merges=dict(plan.near))
+    return bot.PREVIEWS[key]
 
 
 async def test_a_reply_to_a_preview_corrects_it_in_place():
@@ -339,14 +340,14 @@ async def test_a_reply_to_a_preview_corrects_it_in_place():
     original = preview.recipe
     patcher = FakePatcher(a_recipe(servings=2))
     context = make_text_context(FakeStore(), patcher)
+    update = make_reply_update("servings is 2", 77, patcher)
 
-    await bot.on_text(make_reply_update("servings is 2", 77, patcher), context)
+    await bot.on_text(update, context)
 
     assert patcher.calls == [(original, "servings is 2")]
     assert preview.recipe.servings == 2
     assert preview.recipe.corrections == ["servings is 2"]
-    edit = context.bot.edit_message_text.call_args
-    assert edit[1]["message_id"] == 77
+    edit = update.message.reply_to_message.edit_text.call_args
     assert "2 servings" in edit[0][0]
     assert "Corrections: servings is 2" in edit[0][0]
 
@@ -358,7 +359,7 @@ async def test_a_second_correction_keeps_the_first():
 
     await bot.on_text(make_reply_update("it takes 30 minutes", 77, patcher), context)
 
-    assert bot.PREVIEWS["tok"].recipe.corrections == ["servings is 2", "it takes 30 minutes"]
+    assert bot.PREVIEWS[KEY].recipe.corrections == ["servings is 2", "it takes 30 minutes"]
 
 
 async def test_a_correction_that_changes_nothing_is_not_stored():
@@ -370,7 +371,7 @@ async def test_a_correction_that_changes_nothing_is_not_stored():
     await bot.on_text(update, context)
 
     assert preview.recipe.corrections == []
-    assert context.bot.edit_message_text.await_count == 0
+    assert update.message.reply_to_message.edit_text.await_count == 0
     assert "changed nothing" in update.message.reply_text.call_args[0][0]
 
 
@@ -382,8 +383,8 @@ async def test_a_correction_the_model_could_not_apply_leaves_the_preview():
 
     await bot.on_text(update, context)
 
-    assert bot.PREVIEWS["tok"] is preview
-    assert context.bot.edit_message_text.await_count == 0
+    assert bot.PREVIEWS[KEY] is preview
+    assert update.message.reply_to_message.edit_text.await_count == 0
     assert "could not apply" in update.message.reply_text.call_args[0][0]
 
 
@@ -391,13 +392,16 @@ async def test_a_correction_that_renames_an_ingredient_rebuilds_the_merge_map():
     a_live_preview()
     patcher = FakePatcher(a_recipe([Ingredient(name="Soy Sauces")]))
     context = make_text_context(FakeStore(), patcher)
+    update = make_reply_update("it is soy sauce, not chicken", 77, patcher)
 
-    await bot.on_text(make_reply_update("it is soy sauce, not chicken", 77, patcher), context)
+    await bot.on_text(update, context)
 
-    assert bot.PREVIEWS["tok"].merges == {"Soy Sauces": "Soy sauce"}
+    assert bot.PREVIEWS[KEY].merges == {"Soy Sauces": "Soy sauce"}
     labels = [
         b.text
-        for row in context.bot.edit_message_text.call_args[1]["reply_markup"].inline_keyboard
+        for row in update.message.reply_to_message.edit_text.call_args[1][
+            "reply_markup"
+        ].inline_keyboard
         for b in row
     ]
     assert "Save and merge" in labels
@@ -414,12 +418,12 @@ async def test_a_reply_to_anything_else_is_a_new_recipe(monkeypatch):
     await bot.on_text(update, context)
 
     assert patcher.calls == []
-    assert bot.NO_RECIPE_MESSAGE in update.message.reply_text.call_args[0][0]
+    assert t("en", "no_recipe") in update.message.reply_text.call_args[0][0]
 
 
 def test_preview_text_tells_the_user_they_can_reply():
     assert "Reply to this message to correct it." in bot.preview_text(
-        a_recipe(), IngredientPlan()
+        a_recipe(), IngredientPlan(), "en"
     )
 
 
@@ -427,8 +431,7 @@ def test_preview_text_tells_the_user_they_can_reply():
 # users routinely hold the same one at the same time.
 async def test_a_reply_never_reaches_another_users_preview(monkeypatch):
     monkeypatch.setattr(bot, "from_text", lambda *a, **k: None)
-    a_live_preview(message_id=77, token="theirs")
-    bot.PREVIEWS["theirs"].chat_id = 2
+    a_live_preview(key=(2, 77))
     patcher = FakePatcher()
     context = make_text_context(FakeStore(), patcher)
     context.bot_data["_store"].vocabulary = lambda: VOCAB
@@ -437,16 +440,16 @@ async def test_a_reply_never_reaches_another_users_preview(monkeypatch):
     await bot.on_text(update, context)
 
     assert patcher.calls == []
-    assert bot.PREVIEWS["theirs"].recipe.corrections == []
+    assert bot.PREVIEWS[(2, 77)].recipe.corrections == []
 
 
 async def test_a_save_during_the_model_call_is_not_painted_over():
     preview = a_live_preview()
 
     class SavingPatcher(FakePatcher):
-        def patch(self, current, instruction, vocab):
-            bot.PREVIEWS.pop("tok")
-            return super().patch(current, instruction, vocab)
+        def patch(self, current, instruction, vocab, language="en"):
+            bot.PREVIEWS.pop(KEY)
+            return super().patch(current, instruction, vocab, language)
 
     patcher = SavingPatcher(a_recipe(servings=2))
     context = make_text_context(FakeStore(), patcher)
@@ -454,6 +457,6 @@ async def test_a_save_during_the_model_call_is_not_painted_over():
 
     await bot.on_text(update, context)
 
-    assert context.bot.edit_message_text.await_count == 0
+    assert update.message.reply_to_message.edit_text.await_count == 0
     assert preview.recipe.servings == 4
-    assert bot.EXPIRED_MESSAGE in update.message.reply_text.call_args[0][0]
+    assert t("en", "expired") in update.message.reply_text.call_args[0][0]

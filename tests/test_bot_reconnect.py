@@ -78,7 +78,7 @@ async def test_call_with_reconnect_returns_the_function_result():
 
 
 async def test_call_with_reconnect_refreshes_once_on_a_401(monkeypatch):
-    users = FakeUsers(a_user_record())
+    users = FakeUsers(a_user_record(language="el"))
     context = a_context(users)
     monkeypatch.setattr(
         bot.oauth,
@@ -97,6 +97,7 @@ async def test_call_with_reconnect_refreshes_once_on_a_401(monkeypatch):
 
     assert result == "ok"
     assert users.record.notion_access_token == "tok-2"
+    assert users.record.language == "el"
 
 
 async def test_call_with_reconnect_drops_the_user_after_a_second_401(monkeypatch):

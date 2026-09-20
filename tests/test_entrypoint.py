@@ -118,4 +118,4 @@ async def test_post_init_notify_sends_a_telegram_message_on_the_running_loop(mon
     # sleep(0) yields only once, so give it a real tick instead of a flaky one.
     await asyncio.sleep(0.01)
 
-    send_message.assert_awaited_once_with(42, "hello")
+    send_message.assert_awaited_once_with(42, "hello", reply_markup=None)

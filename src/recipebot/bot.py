@@ -3,7 +3,7 @@ import contextlib
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from notion_client.errors import APIResponseError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -32,51 +32,65 @@ from .notion import (
     reconcile_ingredients,
 )
 from .social import SocialBlocked
-from .users import UserRecord
+from .strings import (
+    DEFAULT as DEFAULT_LANGUAGE,
+    LANGUAGES,
+    from_code,
+    language_markup,
+    t,
+)
 
 log = logging.getLogger(__name__)
 
 URL_PATTERN = re.compile(r"https?://\S+")
 
-BLOCKED_MESSAGE = (
-    "I could not open that post. Send me a screenshot of it and I will read that instead."
-)
-NO_RECIPE_MESSAGE = "I could not find a recipe in that."
 # The media types both model providers accept. A file outside this set reaches
 # the API only to come back a 400, so refuse it here with a useful sentence.
 READABLE_MEDIA_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"}
 )
-FILE_TYPE_MESSAGE = (
-    "I can read a PDF or an image file. Send one of those, a photo, or paste the text."
-)
 # Telegram's Bot API refuses to serve a file larger than this, so say so before
 # the download rather than after it fails.
 MAX_FILE_BYTES = 20 * 1024 * 1024
-TOO_BIG_MESSAGE = "That file is over 20 MB, which Telegram will not hand me. Send a smaller one."
-ERROR_MESSAGE = "Something went wrong handling that. Try again, or send it a different way."
 
 # ponytail: previews live in memory on purpose. A restart forgets them and the
 # user re-shares the link. Persist them only if a restart ever loses real work.
-PREVIEWS: dict[str, "Preview"] = {}
+# Keyed by (chat_id, message_id) of the preview message. A Telegram message id
+# is unique per chat, never across chats, so two allowed users routinely hold
+# the same one, and the id alone would match one user's reply to another user's
+# preview. The chat_id holds effective_user.id, as it does elsewhere here.
+PREVIEWS: dict[tuple[int, int], "Preview"] = {}
 
 # ponytail: reimports live beside the previews, and expire the same way.
 REIMPORTS: dict[str, "Reimport"] = {}
 
-EXPIRED_MESSAGE = "I no longer have that preview. Share the recipe again."
-NO_PATCH_MESSAGE = (
-    'I could not apply that. Try naming the field, for example "servings is 2".'
-)
-NO_CHANGE_MESSAGE = "That changed nothing."
-NO_SOURCE_TEXT_MESSAGE = (
-    "That page has no saved source text. Tap Refetch link to read the site again."
-)
 
-CONNECT_MESSAGE = "Connect your Notion account to save recipes there."
+def connect_markup(url: str, language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(t(language, "connect_button"), url=url)]]
+    )
 
 
-def connect_markup(url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Connect Notion", url=url)]])
+def client_language(user) -> str:
+    """What a user who has not chosen yet reads, taken from their Telegram
+    client. Their own choice always wins over this."""
+    return from_code(getattr(user, "language_code", "") or "")
+
+
+def language_for(update, context) -> str:
+    """The language this user reads, for a path that holds no record already."""
+    user = getattr(update, "effective_user", None)
+    record = context.bot_data["users"].get(user.id) if user is not None else None
+    return record.language if record is not None else client_language(user)
+
+
+def connect_prompt(
+    chat_id: int, cfg: Config, language: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    """The sentence and the button that start a connect. Three paths send it:
+    a first message, a revoked token found mid-save, and a stale language tap."""
+    url = callback_server.start_connect(chat_id, cfg, language)
+    return t(language, "connect"), connect_markup(url, language)
 
 
 @dataclass
@@ -86,13 +100,7 @@ class Preview:
     merges: dict[str, str] = field(default_factory=dict)
     # Set when this preview rewrites a page that already exists.
     page_id: str = ""
-    # The message the user replies to in order to correct this preview, and
-    # the sender it belongs to. A Telegram message id is unique per chat, never
-    # across chats, so two allowed users routinely hold the same one, and the
-    # id alone would match one user's reply to another user's preview. Holds
-    # effective_user.id, which is what the rest of this module calls chat_id.
-    chat_id: int = 0
-    message_id: int = 0
+    language: str = DEFAULT_LANGUAGE
 
 
 @dataclass
@@ -101,6 +109,7 @@ class Reimport:
     page_url: str
     source_url: str
     corrections: list[str] = field(default_factory=list)
+    language: str = DEFAULT_LANGUAGE
 
 
 def first_url(text: str) -> str:
@@ -151,14 +160,10 @@ async def call_with_reconnect(chat_id: int, context, fn):
         tokens = await asyncio.to_thread(
             oauth.refresh_access_token, cfg.notion_client_id, cfg.notion_client_secret, record.notion_refresh_token
         )
-        record = UserRecord(
-            telegram_user_id=record.telegram_user_id,
+        record = replace(
+            record,
             notion_access_token=tokens.access_token,
             notion_refresh_token=tokens.refresh_token,
-            recipes_ds=record.recipes_ds,
-            ingredients_ds=record.ingredients_ds,
-            workspace_name=record.workspace_name,
-            connected_at=record.connected_at,
         )
         users.save(record)
         try:
@@ -169,131 +174,131 @@ async def call_with_reconnect(chat_id: int, context, fn):
             raise
 
 
-def write_recipe(store, recipe: Recipe, vocab, merges: dict[str, str], page_id: str) -> str:
+def write_recipe(
+    store, recipe: Recipe, vocab, merges: dict[str, str], page_id: str, language: str
+) -> str:
     """Write the recipe and report it in one sentence. A page id rewrites that
     page; without one the store creates a page, or finds the URL already there."""
     if page_id:
-        return f"Reimported: {store.update_recipe(page_id, recipe, vocab, merges)}"
+        url = store.update_recipe(page_id, recipe, vocab, merges)
+        return t(language, "reimported", url=url)
     url, created = store.save_recipe(recipe, vocab, merges)
-    return f"Saved: {url}" if created else f"Already saved: {url}"
+    return t(language, "saved" if created else "already_saved", url=url)
 
 
-def preview_text(recipe: Recipe, plan: IngredientPlan) -> str:
+def preview_text(recipe: Recipe, plan: IngredientPlan, language: str) -> str:
+    # Cuisine, meal and difficulty are the Notion database's own select values,
+    # so they read in English whatever the user chose; translating them here
+    # would disagree with the page the user opens.
+    facts = t(language, "preview_facts", time_min=recipe.time_min, servings=recipe.servings)
+    if recipe.keeps_days:
+        facts += t(language, "preview_keeps", days=recipe.keeps_days)
     lines = [
         recipe.name,
         f"{recipe.cuisine} | {', '.join(recipe.meal)} | {recipe.difficulty}",
-        f"{recipe.time_min} min | {recipe.servings} servings" + (f" | keeps {recipe.keeps_days}d" if recipe.keeps_days else ""),
+        facts,
         "",
-        "Ingredients: " + ", ".join(item.name for item in recipe.ingredients),
-        f"Method: {len(recipe.method)} steps",
+        t(language, "preview_ingredients", items=", ".join(i.name for i in recipe.ingredients)),
+        t(language, "preview_method", steps=len(recipe.method)),
     ]
     if plan.new:
-        lines.append("New ingredient rows: " + ", ".join(plan.new))
+        lines.append(t(language, "preview_new", items=", ".join(plan.new)))
     for proposed, resembles in plan.near.items():
-        lines.append(f'"{proposed}" looks like the existing "{resembles}".')
+        lines.append(t(language, "preview_near", proposed=proposed, resembles=resembles))
     if recipe.corrections:
-        lines.append("Corrections: " + "; ".join(recipe.corrections))
+        lines.append(t(language, "preview_corrections", items="; ".join(recipe.corrections)))
     lines.append("")
-    lines.append("Reply to this message to correct it.")
+    lines.append(t(language, "preview_reply"))
     return "\n".join(lines)
 
 
-def preview_markup(token: str, plan: IngredientPlan) -> InlineKeyboardMarkup:
-    row = [InlineKeyboardButton("Save", callback_data=f"save:{token}")]
+def preview_markup(plan: IngredientPlan, language: str) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton(t(language, "save_button"), callback_data="save")]
     if plan.near:
-        row.append(InlineKeyboardButton("Save and merge", callback_data=f"merge:{token}"))
-    row.append(InlineKeyboardButton("Discard", callback_data=f"drop:{token}"))
+        row.append(InlineKeyboardButton(t(language, "merge_button"), callback_data="merge"))
+    row.append(InlineKeyboardButton(t(language, "drop_button"), callback_data="drop"))
     return InlineKeyboardMarkup([row])
 
 
-async def send_preview(recipe, plan, vocab, update, page_id: str = "") -> None:
-    token = uuid.uuid4().hex
-    preview = Preview(
+async def send_preview(recipe, plan, vocab, update, language: str, page_id: str = "") -> None:
+    sent = await update.effective_message.reply_text(
+        preview_text(recipe, plan, language), reply_markup=preview_markup(plan, language)
+    )
+    PREVIEWS[(update.effective_user.id, sent.message_id)] = Preview(
         recipe=recipe,
         vocab=vocab,
         merges=dict(plan.near),
         page_id=page_id,
-        chat_id=update.effective_user.id,
+        language=language,
     )
-    PREVIEWS[token] = preview
-    sent = await update.effective_message.reply_text(
-        preview_text(recipe, plan), reply_markup=preview_markup(token, plan)
-    )
-    preview.message_id = sent.message_id
 
 
-def preview_for_reply(message, chat_id: int) -> str:
-    """The token of the preview the user replied to, or "". Scanning the
-    handful of live previews beats a second dict keyed by message id, which
-    would leak an entry on every Discard."""
+def preview_for_reply(message, chat_id: int) -> tuple[int, int] | None:
+    """The PREVIEWS key of the preview the user replied to, or None."""
     reply_to = getattr(message, "reply_to_message", None)
     if reply_to is None:
-        return ""
-    target = (chat_id, reply_to.message_id)
-    return next(
-        (
-            token
-            for token, preview in PREVIEWS.items()
-            if (preview.chat_id, preview.message_id) == target
-        ),
-        "",
-    )
+        return None
+    key = (chat_id, reply_to.message_id)
+    return key if key in PREVIEWS else None
 
 
-async def apply_correction(token: str, instruction: str, update, context) -> None:
-    preview = PREVIEWS[token]
+async def apply_correction(key: tuple[int, int], instruction: str, update, context) -> None:
+    preview = PREVIEWS[key]
     corrected = await asyncio.to_thread(
         context.bot_data["extractor"].patch,
         preview.recipe,
         instruction,
         preview.vocab,
+        preview.language,
     )
-    # Saving or discarding during the model call pops the token, and editing
+    # Saving or discarding during the model call pops the preview, and editing
     # the message now would paint a dead preview over "Saved: <url>".
-    if PREVIEWS.get(token) is not preview:
-        await update.message.reply_text(EXPIRED_MESSAGE)
+    if PREVIEWS.get(key) is not preview:
+        await update.message.reply_text(t(preview.language, "expired"))
         return
     if corrected is None:
-        await update.message.reply_text(NO_PATCH_MESSAGE)
+        await update.message.reply_text(t(preview.language, "no_patch"))
         return
     # Compare before recording the instruction, or the two can never be equal.
     # An instruction that changed nothing must not be stored, both because a
     # reimport would re-apply it forever and because editing a message to its
     # own text is a BadRequest.
     if corrected == preview.recipe:
-        await update.message.reply_text(NO_CHANGE_MESSAGE)
+        await update.message.reply_text(t(preview.language, "no_change"))
         return
     corrected.corrections = [*corrected.corrections, instruction]
     # A correction can add or rename an ingredient, so the plan is stale.
     plan = reconcile_ingredients(preview.vocab, corrected.ingredients)
     preview.recipe = corrected
     preview.merges = dict(plan.near)
-    # Edited in place, so the token and the message id hold and the user
-    # corrects again by replying to the same message.
-    await context.bot.edit_message_text(
-        preview_text(corrected, plan),
-        chat_id=update.effective_user.id,
-        message_id=preview.message_id,
-        reply_markup=preview_markup(token, plan),
+    # Edited in place, so the key holds and the user corrects again by
+    # replying to the same message.
+    await update.message.reply_to_message.edit_text(
+        preview_text(corrected, plan, preview.language),
+        reply_markup=preview_markup(plan, preview.language),
     )
 
 
 REIMPORT_ACTIONS = frozenset({"refetch", "stored", "keep"})
 
 
-def reimport_markup(token: str) -> InlineKeyboardMarkup:
+def reimport_markup(token: str, language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Refetch link", callback_data=f"refetch:{token}"),
-                InlineKeyboardButton("Reuse saved text", callback_data=f"stored:{token}"),
-                InlineKeyboardButton("Keep", callback_data=f"keep:{token}"),
+                InlineKeyboardButton(
+                    t(language, "refetch_button"), callback_data=f"refetch:{token}"
+                ),
+                InlineKeyboardButton(
+                    t(language, "stored_button"), callback_data=f"stored:{token}"
+                ),
+                InlineKeyboardButton(t(language, "keep_button"), callback_data=f"keep:{token}"),
             ]
         ]
     )
 
 
-async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
+async def send_reimport_prompt(page: dict, source_url: str, update, language: str) -> None:
     token = uuid.uuid4().hex
     corrections = corrections_of(page)
     REIMPORTS[token] = Reimport(
@@ -301,16 +306,13 @@ async def send_reimport_prompt(page: dict, source_url: str, update) -> None:
         page_url=page["url"],
         source_url=source_url,
         corrections=corrections,
+        language=language,
     )
-    prompt = (
-        f"Already saved: {page['url']}\n\nReimport it? Refetch link reads the site again. "
-        "Reuse saved text runs the extraction over the text already on the page. "
-        "Both replace the page body, so anything you wrote there by hand goes."
-    )
+    prompt = t(language, "reimport_prompt", url=page["url"])
     if corrections:
-        prompt += "\n\nBoth also apply your corrections again: " + "; ".join(corrections)
+        prompt += t(language, "reimport_corrections", corrections="; ".join(corrections))
     await update.effective_message.reply_text(
-        prompt, reply_markup=reimport_markup(token)
+        prompt, reply_markup=reimport_markup(token, language)
     )
 
 
@@ -318,35 +320,39 @@ async def on_reimport(action: str, token: str, update, context) -> None:
     query = update.callback_query
     job = REIMPORTS.pop(token, None)
     if job is None:
-        await query.edit_message_text(EXPIRED_MESSAGE)
+        await query.edit_message_text(t(language_for(update, context), "expired"))
         return
+    language = job.language
     if action == "keep":
-        await query.edit_message_text(f"Left as it is: {job.page_url}")
+        await query.edit_message_text(t(language, "reimport_kept", url=job.page_url))
         return
 
     chat_id = update.effective_user.id
     extractor = context.bot_data["extractor"]
-    await query.edit_message_text(f"Reimporting {job.page_url}")
+    await query.edit_message_text(t(language, "reimporting", url=job.page_url))
     vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())
 
     if action == "refetch":
         try:
-            recipe = await asyncio.to_thread(from_url, job.source_url, extractor, vocab)
+            recipe = await asyncio.to_thread(
+                from_url, job.source_url, extractor, vocab, language
+            )
         except SocialBlocked:
-            await query.message.reply_text(BLOCKED_MESSAGE)
+            await query.message.reply_text(t(language, "blocked"))
             return
     else:
         text = await call_with_reconnect(
             chat_id, context, lambda store: store.source_text(job.page_id)
         )
         if not text.strip():
-            await query.message.reply_text(NO_SOURCE_TEXT_MESSAGE)
+            await query.message.reply_text(t(language, "no_source_text"))
             return
         recipe = await asyncio.to_thread(
             from_text,
             text,
             extractor,
             vocab,
+            language,
             source=source_for(job.source_url),
             source_url=job.source_url,
         )
@@ -357,12 +363,27 @@ async def on_reimport(action: str, token: str, update, context) -> None:
         recipe.corrections = job.corrections
         recipe = (
             await asyncio.to_thread(
-                extractor.patch, recipe, "\n".join(job.corrections), vocab
+                extractor.patch, recipe, "\n".join(job.corrections), vocab, language
             )
             or recipe
         )
 
-    await _deliver(recipe, vocab, update, page_id=job.page_id)
+    await _deliver(recipe, vocab, update, language, page_id=job.page_id)
+
+
+async def on_language(code: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    users = context.bot_data["users"]
+    chat_id = update.effective_user.id
+    record = users.get(chat_id)
+    if record is None:
+        # The row went away between the prompt and the tap, so there is nothing
+        # to set the language on. Offer the connect button rather than a dead end.
+        text, markup = connect_prompt(chat_id, context.bot_data["cfg"], code)
+        await query.edit_message_text(text, reply_markup=markup)
+        return
+    users.save(replace(record, language=code))
+    await query.edit_message_text(t(code, "language_set", language=LANGUAGES[code]))
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -370,60 +391,73 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await query.answer()
     action, _, token = query.data.partition(":")
 
+    if action == "lang" and token in LANGUAGES:
+        await on_language(token, update, context)
+        return
+
     if action in REIMPORT_ACTIONS:
         await on_reimport(action, token, update, context)
         return
 
-    preview = PREVIEWS.pop(token, None)
+    chat_id = update.effective_user.id
+    key = (chat_id, query.message.message_id)
+    preview = PREVIEWS.pop(key, None)
     if preview is None:
-        await query.edit_message_text(EXPIRED_MESSAGE)
+        await query.edit_message_text(t(language_for(update, context), "expired"))
         return
 
     if action == "drop":
-        await query.edit_message_text("Discarded.")
+        await query.edit_message_text(t(preview.language, "discarded"))
         return
 
     merges = preview.merges if action == "merge" else {}
-    chat_id = update.effective_user.id
     try:
         message = await call_with_reconnect(
             chat_id,
             context,
             lambda store: write_recipe(
-                store, preview.recipe, preview.vocab, merges, preview.page_id
+                store, preview.recipe, preview.vocab, merges, preview.page_id, preview.language
             ),
         )
     except LookupError:
-        url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
-        await query.edit_message_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
+        text, markup = connect_prompt(chat_id, context.bot_data["cfg"], preview.language)
+        await query.edit_message_text(text, reply_markup=markup)
         return
     except Exception:
-        PREVIEWS[token] = preview
-        log.exception("save_recipe failed for token %s", token)
+        PREVIEWS[key] = preview
+        log.exception("save_recipe failed for %s", key)
         # A second failure re-sends identical text and markup, which Telegram
         # rejects as unmodified. Swallowing it keeps the error handler from
         # posting a second, less useful message on top.
         with contextlib.suppress(BadRequest):
             await query.edit_message_text(
-                "Saving failed. Tap Save to try again.",
-                reply_markup=preview_markup(token, IngredientPlan(near=preview.merges)),
+                t(preview.language, "save_failed"),
+                reply_markup=preview_markup(
+                    IngredientPlan(near=preview.merges), preview.language
+                ),
             )
         return
     await query.edit_message_text(message)
 
 
-async def _deliver(recipe: Recipe | None, vocab, update, page_id: str = "") -> None:
+async def _deliver(
+    recipe: Recipe | None, vocab, update, language: str, page_id: str = ""
+) -> None:
     if recipe is None:
-        await update.effective_message.reply_text(NO_RECIPE_MESSAGE)
+        await update.effective_message.reply_text(t(language, "no_recipe"))
         return
     plan = reconcile_ingredients(vocab, recipe.ingredients)
-    await send_preview(recipe, plan, vocab, update, page_id)
+    await send_preview(recipe, plan, vocab, update, language, page_id)
 
 
 async def send_connect_button(update, context) -> None:
-    chat_id = update.effective_user.id
-    url = callback_server.start_connect(chat_id, context.bot_data["cfg"])
-    await update.effective_message.reply_text(CONNECT_MESSAGE, reply_markup=connect_markup(url))
+    # Only ever reached where the caller has just read no record for this user,
+    # so the language comes off their Telegram client, not a second lookup.
+    user = update.effective_user
+    text, markup = connect_prompt(
+        user.id, context.bot_data["cfg"], client_language(user)
+    )
+    await update.effective_message.reply_text(text, reply_markup=markup)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -434,31 +468,40 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     message = getattr(update, "effective_message", None)
     if message is not None:
-        await message.reply_text(ERROR_MESSAGE)
+        await message.reply_text(t(language_for(update, context), "error"))
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    users = context.bot_data["users"]
-    if users.get(update.effective_user.id) is None:
+    record = context.bot_data["users"].get(update.effective_user.id)
+    if record is None:
+        await send_connect_button(update, context)
+        return
+    await update.effective_message.reply_text(t(record.language, "ready"))
+
+
+async def on_language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    record = context.bot_data["users"].get(update.effective_user.id)
+    if record is None:
         await send_connect_button(update, context)
         return
     await update.effective_message.reply_text(
-        "Send me a recipe link, an Instagram or TikTok post, a photo, a PDF, or pasted text."
+        t(record.language, "language_prompt"), reply_markup=language_markup()
     )
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_user.id
-    users = context.bot_data["users"]
-    if users.get(chat_id) is None:
+    record = context.bot_data["users"].get(chat_id)
+    if record is None:
         await send_connect_button(update, context)
         return
+    language = record.language
     extractor = context.bot_data["extractor"]
     text = update.message.text or ""
 
-    token = preview_for_reply(update.message, chat_id)
-    if token:
-        await apply_correction(token, text, update, context)
+    key = preview_for_reply(update.message, chat_id)
+    if key is not None:
+        await apply_correction(key, text, update, context)
         return
 
     url = first_url(text)
@@ -466,28 +509,29 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if url:
         existing = await call_with_reconnect(chat_id, context, lambda store: store.find_by_url(url))
         if existing:
-            await send_reimport_prompt(existing, url, update)
+            await send_reimport_prompt(existing, url, update, language)
             return
 
     vocab = await call_with_reconnect(chat_id, context, lambda store: store.vocabulary())
     try:
         if url:
-            recipe = await asyncio.to_thread(from_url, url, extractor, vocab)
+            recipe = await asyncio.to_thread(from_url, url, extractor, vocab, language)
         else:
-            recipe = await asyncio.to_thread(from_text, text, extractor, vocab)
+            recipe = await asyncio.to_thread(from_text, text, extractor, vocab, language)
     except SocialBlocked:
-        await update.message.reply_text(BLOCKED_MESSAGE)
+        await update.message.reply_text(t(language, "blocked"))
         return
 
-    await _deliver(recipe, vocab, update)
+    await _deliver(recipe, vocab, update, language)
 
 
 async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_user.id
-    users = context.bot_data["users"]
-    if users.get(chat_id) is None:
+    record = context.bot_data["users"].get(chat_id)
+    if record is None:
         await send_connect_button(update, context)
         return
+    language = record.language
     message = update.message
 
     if message.photo:
@@ -496,10 +540,10 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         document = message.document
         media_type = (document.mime_type or "").lower()
         if media_type not in READABLE_MEDIA_TYPES:
-            await message.reply_text(FILE_TYPE_MESSAGE)
+            await message.reply_text(t(language, "file_type"))
             return
         if (document.file_size or 0) > MAX_FILE_BYTES:
-            await message.reply_text(TOO_BIG_MESSAGE)
+            await message.reply_text(t(language, "too_big"))
             return
         file_id = document.file_id
 
@@ -512,20 +556,16 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [(data, media_type)],
         context.bot_data["extractor"],
         vocab,
+        language,
         caption=message.caption or "",
     )
-    await _deliver(recipe, vocab, update)
+    await _deliver(recipe, vocab, update, language)
 
 
 async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
     context.bot_data["users"].delete(update.effective_user.id)
-    await update.effective_message.reply_text(
-        "Disconnected. Send me a message to connect a Notion account again."
-    )
-
-
-OWNER_ONLY_MESSAGE = "That command is for the bot owner only."
-BAD_ID_MESSAGE = "Send a numeric Telegram user id, like /allow 6529645381."
+    await update.effective_message.reply_text(t(language, "disconnected"))
 
 
 def _is_owner(update, context) -> bool:
@@ -539,59 +579,59 @@ def _target_id(context) -> int | None:
 
 
 async def on_allow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
     if not _is_owner(update, context):
-        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(t(language, "owner_only"))
         return
     target = _target_id(context)
     if target is None:
-        await update.effective_message.reply_text(BAD_ID_MESSAGE)
+        await update.effective_message.reply_text(t(language, "bad_user_id"))
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     if is_allowed(target, cfg.allowed_user_ids, users):
-        await update.effective_message.reply_text(f"{target} is already allowed.")
+        await update.effective_message.reply_text(t(language, "already_allowed", user_id=target))
         return
     users.allow(target)
     log.info("owner %s allowed %s", update.effective_user.id, target)
-    await update.effective_message.reply_text(f"Allowed {target}. They can message the bot now.")
+    await update.effective_message.reply_text(t(language, "allowed_now", user_id=target))
 
 
 async def on_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
     if not _is_owner(update, context):
-        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(t(language, "owner_only"))
         return
     target = _target_id(context)
     if target is None:
-        await update.effective_message.reply_text(BAD_ID_MESSAGE)
+        await update.effective_message.reply_text(t(language, "bad_user_id"))
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     if target == cfg.owner_id:
-        await update.effective_message.reply_text("That is the owner id. Refusing to lock you out.")
+        await update.effective_message.reply_text(t(language, "deny_owner"))
         return
     if target in cfg.allowed_user_ids:
-        await update.effective_message.reply_text(
-            f"{target} comes from TELEGRAM_ALLOWED_USER_IDS. "
-            "Remove it there and restart the bot."
-        )
+        await update.effective_message.reply_text(t(language, "deny_env_id", user_id=target))
         return
     if target not in users.allowed_ids():
-        await update.effective_message.reply_text(f"{target} is not allowed.")
+        await update.effective_message.reply_text(t(language, "not_allowed", user_id=target))
         return
     users.deny(target)
     log.info("owner %s denied %s", update.effective_user.id, target)
-    await update.effective_message.reply_text(f"Denied {target}.")
+    await update.effective_message.reply_text(t(language, "denied", user_id=target))
 
 
 async def on_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    language = language_for(update, context)
     if not _is_owner(update, context):
-        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(t(language, "owner_only"))
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     lines = [f"{user_id} (env)" for user_id in sorted(cfg.allowed_user_ids)]
     lines += [str(user_id) for user_id in sorted(users.allowed_ids() - cfg.allowed_user_ids)]
-    await update.effective_message.reply_text("Allowed users:\n" + "\n".join(lines))
+    await update.effective_message.reply_text(t(language, "allowed_list", lines="\n".join(lines)))
 
 
 def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:
@@ -609,6 +649,7 @@ def build_application(cfg: Config, users, extractor: Extractor, *, post_init=Non
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
     application.add_handler(CommandHandler("disconnect", on_disconnect))
+    application.add_handler(CommandHandler("language", on_language_command))
     application.add_handler(CommandHandler("allow", on_allow))
     application.add_handler(CommandHandler("deny", on_deny))
     application.add_handler(CommandHandler("allowed", on_allowed))

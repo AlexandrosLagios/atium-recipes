@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 from recipebot import bot
 from recipebot.config import Config
+from recipebot.strings import t
 
 OWNER = 111
 GUEST = 222
@@ -26,8 +27,14 @@ def a_config(**overrides) -> Config:
 
 
 class FakeAllowlist:
-    def __init__(self, ids=()):
+    def __init__(self, ids=(), record=None):
         self.ids = set(ids)
+        self.record = record
+
+    def get(self, telegram_user_id):
+        """language_for reads the connected row to pick a language. The owner
+        need not have connected Notion, so None is the interesting default."""
+        return self.record
 
     def allowed_ids(self):
         return frozenset(self.ids)
@@ -202,3 +209,23 @@ async def test_an_edited_listing_command_still_answers():
     await bot.on_allowed(update, a_context(FakeAllowlist({NEWCOMER}), []))
 
     assert str(NEWCOMER) in last_reply(update)
+
+
+async def test_a_greek_owner_is_answered_in_greek():
+    allowlist = FakeAllowlist(record=SimpleNamespace(language="el"))
+    update = an_update(OWNER)
+
+    await bot.on_allow(update, a_context(allowlist, [str(NEWCOMER)]))
+
+    assert allowlist.allowed_ids() == frozenset({NEWCOMER})
+    assert last_reply(update) == t("el", "allowed_now", user_id=NEWCOMER)
+
+
+async def test_a_greek_owner_is_refused_in_greek():
+    allowlist = FakeAllowlist(record=SimpleNamespace(language="el"))
+    update = an_update(GUEST)
+
+    await bot.on_allow(update, a_context(allowlist, [str(NEWCOMER)]))
+
+    assert allowlist.allowed_ids() == frozenset()
+    assert last_reply(update) == t("el", "owner_only")

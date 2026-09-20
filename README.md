@@ -14,6 +14,12 @@ Sync recipes from URLs, Instagram, and other sources into a Notion database.
 3. Each allowed friend messages the bot and taps **Connect Notion**. The bot
    creates a Recipes and an Ingredients database under whatever page they
    share, and confirms in Telegram once it is done.
+4. The confirmation asks which language to write in, English or Greek. The
+   choice covers both the recipes and the bot's own replies, and `/language`
+   changes it later. Until the choice is made the bot follows the Telegram
+   client's own language. Cuisine, Meal, Difficulty and Category stay in
+   English whatever the choice, because they are the Notion databases' select
+   options.
 
 Share a link the bot already saved and it offers to reimport that page:
 **Refetch link** reads the site again, **Reuse saved text** runs the

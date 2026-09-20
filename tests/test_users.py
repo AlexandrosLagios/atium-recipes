@@ -1,3 +1,5 @@
+import sqlite3
+
 from recipebot.users import UserRecord, UserStore
 
 
@@ -128,3 +130,31 @@ def test_denying_an_id_leaves_its_notion_connection_alone(tmp_path):
     store.deny(1)
 
     assert store.get(1) == a_record()
+def test_the_language_round_trips(tmp_path):
+    store = UserStore(str(tmp_path / "users.db"))
+
+    store.save(a_record(language="el"))
+
+    assert store.get(1).language == "el"
+
+
+def test_a_row_written_before_the_language_column_keeps_its_data(tmp_path):
+    path = str(tmp_path / "users.db")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE users (
+                telegram_user_id INTEGER PRIMARY KEY,
+                notion_access_token TEXT NOT NULL,
+                notion_refresh_token TEXT,
+                recipes_ds TEXT NOT NULL,
+                ingredients_ds TEXT NOT NULL,
+                workspace_name TEXT NOT NULL,
+                connected_at INTEGER NOT NULL
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO users VALUES (1, 'tok-1', 'refresh-1', 'ds-r', 'ds-i', ?, 1700000000)",
+            ("Alex's Kitchen",),
+        )
+
+    assert UserStore(path).get(1) == a_record(language="en")
