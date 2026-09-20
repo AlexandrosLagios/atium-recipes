@@ -429,7 +429,8 @@ async def send_connect_button(update, context) -> None:
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("handler failed", exc_info=context.error)
     user = getattr(update, "effective_user", None)
-    if user is None or user.id not in context.bot_data["cfg"].allowed_user_ids:
+    cfg = context.bot_data["cfg"]
+    if user is None or not is_allowed(user.id, cfg.allowed_user_ids, context.bot_data["users"]):
         return
     message = getattr(update, "effective_message", None)
     if message is not None:

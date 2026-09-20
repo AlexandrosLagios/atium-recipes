@@ -30,9 +30,13 @@ def a_user_record(**overrides) -> UserRecord:
 
 
 class FakeUsers:
-    def __init__(self, record=None):
+    def __init__(self, record=None, allowed=()):
         self.record = record
         self.deleted = []
+        self.allowed = frozenset(allowed)
+
+    def allowed_ids(self):
+        return self.allowed
 
     def get(self, telegram_user_id):
         return self.record
@@ -312,6 +316,18 @@ async def test_a_document_over_the_telegram_limit_is_refused(monkeypatch):
 async def test_on_error_replies_to_the_allowed_user():
     update = make_update(text="hi")
     context = make_context(FakeStore(), object())
+    context.error = RuntimeError("boom")
+
+    await bot.on_error(update, context)
+
+    update.message.reply_text.assert_awaited_once_with(bot.ERROR_MESSAGE)
+
+
+async def test_on_error_replies_to_a_user_allowed_only_in_the_database():
+    update = make_update(text="hi")
+    update.effective_user = type("User", (), {"id": 999})()
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = FakeUsers(a_user_record(), allowed={999})
     context.error = RuntimeError("boom")
 
     await bot.on_error(update, context)
