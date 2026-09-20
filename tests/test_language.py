@@ -209,9 +209,7 @@ async def test_a_correction_to_a_greek_preview_is_patched_in_greek(monkeypatch):
 
     context = make_context(a_user_record(language="el"))
     context.bot_data["extractor"] = Patcher()
-    bot.PREVIEWS["tok"] = bot.Preview(
-        recipe=a_recipe(), vocab=VOCAB, chat_id=1, message_id=77, language="el"
-    )
+    bot.PREVIEWS[(1, 77)] = bot.Preview(recipe=a_recipe(), vocab=VOCAB, language="el")
     update = make_update(text="οι μερίδες είναι 2")
     update.message.reply_to_message = type("R", (), {"message_id": 77})()
 
