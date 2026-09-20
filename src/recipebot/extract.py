@@ -33,16 +33,16 @@ def source_for(url: str) -> str:
     return "Web"
 
 
-def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
+def from_url(url: str, extractor, vocab: Vocabulary, language: str) -> Recipe | None:
     source = source_for(url)
     if source in {"Instagram", "TikTok", "YouTube"}:
-        return _from_social(url, source, extractor, vocab)
+        return _from_social(url, source, extractor, vocab, language)
 
     html = fetch_html(url)
     scraped = scrape_jsonld(html, url)
     if scraped is None:
         body = readable_text(html, url)
-        extracted = extractor.extract([text_block(body)], vocab)
+        extracted = extractor.extract([text_block(body)], vocab, language)
         if extracted is None:
             return None
         return Recipe.from_extracted(
@@ -50,7 +50,7 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
         )
 
     prompt = scraped.as_prompt()
-    extracted = extractor.extract([text_block(prompt)], vocab)
+    extracted = extractor.extract([text_block(prompt)], vocab, language)
     if extracted is None:
         return None
     recipe = Recipe.from_extracted(
@@ -70,7 +70,9 @@ def from_url(url: str, extractor, vocab: Vocabulary) -> Recipe | None:
     return recipe
 
 
-def _from_social(url: str, source: str, extractor, vocab: Vocabulary) -> Recipe | None:
+def _from_social(
+    url: str, source: str, extractor, vocab: Vocabulary, language: str
+) -> Recipe | None:
     with tempfile.TemporaryDirectory() as tmp:
         result = fetch_social(url, Path(tmp))
         images = [(frame, "image/jpeg") for frame in result.frames]
@@ -78,6 +80,7 @@ def _from_social(url: str, source: str, extractor, vocab: Vocabulary) -> Recipe 
             images,
             extractor,
             vocab,
+            language,
             source=source,
             source_url=url,
             caption=result.caption,
@@ -90,6 +93,7 @@ def from_photo(
     images: list[tuple[bytes, str]],
     extractor,
     vocab: Vocabulary,
+    language: str,
     *,
     source: str = "Photo",
     source_url: str = "",
@@ -99,7 +103,7 @@ def from_photo(
 ) -> Recipe | None:
     blocks = [image_block(data, media_type) for data, media_type in images]
     blocks.append(text_block(f"{prompt}\n\n{caption}".strip()))
-    extracted = extractor.extract(blocks, vocab)
+    extracted = extractor.extract(blocks, vocab, language)
     if extracted is None:
         return None
     return Recipe.from_extracted(
@@ -112,9 +116,15 @@ def from_photo(
 
 
 def from_text(
-    text: str, extractor, vocab: Vocabulary, *, source: str = "Text", source_url: str = ""
+    text: str,
+    extractor,
+    vocab: Vocabulary,
+    language: str,
+    *,
+    source: str = "Text",
+    source_url: str = "",
 ) -> Recipe | None:
-    extracted = extractor.extract([text_block(text)], vocab)
+    extracted = extractor.extract([text_block(text)], vocab, language)
     if extracted is None:
         return None
     return Recipe.from_extracted(

@@ -7,6 +7,7 @@ from recipebot import bot
 from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import Vocabulary
+from recipebot.strings import t
 from recipebot.users import UserRecord
 
 VOCAB = Vocabulary(
@@ -154,7 +155,7 @@ async def test_reuse_saved_text_never_reads_the_link(monkeypatch):
     monkeypatch.setattr(bot, "from_url", lambda *a, **k: pytest.fail("refetched"))
     seen = {}
 
-    def fake_from_text(text, extractor, vocab, *, source="Text", source_url=""):
+    def fake_from_text(text, extractor, vocab, language="en", *, source="Text", source_url=""):
         seen.update(text=text, source=source, source_url=source_url)
         return a_recipe()
 
@@ -247,7 +248,7 @@ async def test_a_reimport_that_finds_no_recipe_leaves_the_page_alone(monkeypatch
     await bot.on_callback(update, make_context(store))
 
     assert store.updated == []
-    assert bot.NO_RECIPE_MESSAGE in update.effective_message.reply_text.call_args[0][0]
+    assert t("en", "no_recipe") in update.effective_message.reply_text.call_args[0][0]
 
 
 class FakePatcher:
@@ -255,7 +256,7 @@ class FakePatcher:
         self.result = result
         self.calls = []
 
-    def patch(self, current, instruction, vocab):
+    def patch(self, current, instruction, vocab, language="en"):
         self.calls.append((current, instruction))
         result = self.result
         # Extractor.patch rebuilds from the caller's own dump, so the fields a
@@ -315,6 +316,7 @@ async def test_the_reimport_prompt_reads_the_corrections_off_the_page():
         a_page("servings is 2", "drop the coriander"),
         "https://example.com/braise",
         update,
+        "en",
     )
 
     job = next(iter(bot.REIMPORTS.values()))
@@ -327,6 +329,6 @@ async def test_a_page_without_the_corrections_property_reimports_clean():
     update.effective_message = type("M", (), {})()
     update.effective_message.reply_text = AsyncMock()
 
-    await bot.send_reimport_prompt(PAGE, "https://example.com/braise", update)
+    await bot.send_reimport_prompt(PAGE, "https://example.com/braise", update, "en")
 
     assert next(iter(bot.REIMPORTS.values())).corrections == []

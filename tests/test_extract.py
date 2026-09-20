@@ -25,9 +25,11 @@ class StubExtractor:
     def __init__(self, result=MODEL_SAID):
         self.result = result
         self.calls = []
+        self.languages = []
 
-    def extract(self, blocks, vocab):
+    def extract(self, blocks, vocab, language="en"):
         self.calls.append(blocks)
+        self.languages.append(language)
         return self.result
 
 
@@ -51,7 +53,7 @@ def test_the_scraper_facts_win_over_the_model(monkeypatch):
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
     stub = StubExtractor()
 
-    recipe = extract.from_url("https://redhousespice.com/x/?utm=1", stub, VOCAB)
+    recipe = extract.from_url("https://redhousespice.com/x/?utm=1", stub, VOCAB, "en")
 
     assert recipe.name == "Overnight pickled vegetables"
     assert recipe.time_min == 745
@@ -75,7 +77,7 @@ def test_the_model_estimate_survives_when_the_scraper_found_no_time_or_servings(
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
     stub = StubExtractor()
 
-    recipe = extract.from_url("https://example.com/no-time-data", stub, VOCAB)
+    recipe = extract.from_url("https://example.com/no-time-data", stub, VOCAB, "en")
 
     assert recipe.time_min == 10
     assert recipe.servings == 1
@@ -94,7 +96,7 @@ def test_time_min_takes_the_models_resting_aware_figure_over_a_smaller_scraped_o
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
     stub = StubExtractor(result=model_said)
 
-    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB)
+    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB, "en")
 
     assert recipe.time_min == 745
 
@@ -112,7 +114,7 @@ def test_time_min_keeps_the_larger_scraped_figure_over_a_smaller_model_one(monke
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: scraped)
     stub = StubExtractor(result=model_said)
 
-    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB)
+    recipe = extract.from_url("https://redhousespice.com/x/", stub, VOCAB, "en")
 
     assert recipe.time_min == 745
 
@@ -122,7 +124,7 @@ def test_a_page_without_structured_data_falls_back_to_the_readable_body(monkeypa
     monkeypatch.setattr(extract, "scrape_jsonld", lambda html, url: None)
     monkeypatch.setattr(extract, "readable_text", lambda html, url: "chicken and onion")
 
-    recipe = extract.from_url("https://example.com/stew", StubExtractor(), VOCAB)
+    recipe = extract.from_url("https://example.com/stew", StubExtractor(), VOCAB, "en")
 
     assert recipe.name == "Model title"
     assert recipe.source_text == "chicken and onion"
@@ -134,7 +136,7 @@ def test_a_page_without_structured_data_has_a_canonical_source_url(monkeypatch):
     monkeypatch.setattr(extract, "readable_text", lambda html, url: "chicken and onion")
 
     recipe = extract.from_url(
-        "https://example.com/stew?ref=share#top", StubExtractor(), VOCAB
+        "https://example.com/stew?ref=share#top", StubExtractor(), VOCAB, "en"
     )
 
     assert recipe.source_url == "https://example.com/stew"
@@ -145,7 +147,7 @@ def test_a_social_url_sends_the_caption_and_the_frames(monkeypatch):
     monkeypatch.setattr(extract, "fetch_social", lambda url, workdir: result)
     stub = StubExtractor()
 
-    recipe = extract.from_url("https://www.instagram.com/p/abc/", stub, VOCAB)
+    recipe = extract.from_url("https://www.instagram.com/p/abc/", stub, VOCAB, "en")
 
     assert recipe.source == "Instagram"
     assert recipe.image_url == "https://cdn/t.jpg"
@@ -160,7 +162,7 @@ def test_a_social_url_has_a_canonical_source_url(monkeypatch):
     monkeypatch.setattr(extract, "fetch_social", lambda url, workdir: result)
 
     recipe = extract.from_url(
-        "https://www.instagram.com/p/abc/?igsh=xyz", StubExtractor(), VOCAB
+        "https://www.instagram.com/p/abc/?igsh=xyz", StubExtractor(), VOCAB, "en"
     )
 
     assert recipe.source_url == "https://www.instagram.com/p/abc/"
@@ -173,13 +175,13 @@ def test_a_blocked_social_url_propagates(monkeypatch):
     monkeypatch.setattr(extract, "fetch_social", blow_up)
 
     with pytest.raises(SocialBlocked):
-        extract.from_url("https://www.instagram.com/p/abc/", StubExtractor(), VOCAB)
+        extract.from_url("https://www.instagram.com/p/abc/", StubExtractor(), VOCAB, "en")
 
 
 def test_from_photo_sends_an_image_block_and_no_source_url():
     stub = StubExtractor()
 
-    recipe = extract.from_photo([(b"\x89PNG", "image/png")], stub, VOCAB)
+    recipe = extract.from_photo([(b"\x89PNG", "image/png")], stub, VOCAB, "en")
 
     assert recipe.source == "Photo"
     assert recipe.source_url == ""
@@ -187,7 +189,7 @@ def test_from_photo_sends_an_image_block_and_no_source_url():
 
 
 def test_from_text_keeps_the_pasted_text_as_source_text():
-    recipe = extract.from_text("200g noodles, boil them", StubExtractor(), VOCAB)
+    recipe = extract.from_text("200g noodles, boil them", StubExtractor(), VOCAB, "en")
 
     assert recipe.source == "Text"
     assert recipe.source_text == "200g noodles, boil them"
@@ -196,4 +198,4 @@ def test_from_text_keeps_the_pasted_text_as_source_text():
 def test_an_empty_extraction_returns_none():
     stub = StubExtractor(result=None)
 
-    assert extract.from_text("hello", stub, VOCAB) is None
+    assert extract.from_text("hello", stub, VOCAB, "en") is None
