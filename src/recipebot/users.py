@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from dataclasses import dataclass
 
 _SCHEMA = """
@@ -10,6 +11,13 @@ CREATE TABLE IF NOT EXISTS users (
     ingredients_ds TEXT NOT NULL,
     workspace_name TEXT NOT NULL,
     connected_at INTEGER NOT NULL
+)
+"""
+
+_ALLOWLIST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS allowed_users (
+    telegram_user_id INTEGER PRIMARY KEY,
+    added_at INTEGER NOT NULL
 )
 """
 
@@ -36,14 +44,17 @@ class UserRecord:
 
 
 class UserStore:
-    """One row per connected Telegram user. Opens a fresh connection per
-    call rather than holding one open, because handlers call in from
-    asyncio.to_thread workers and a bot this size never needs a pool."""
+    """Two tables. `users` holds one row per connected Telegram user, and
+    `allowed_users` holds the ids the owner allowed at runtime, which outlive a
+    container rebuild that an env-var allowlist would not. Opens a fresh
+    connection per call rather than holding one open, because handlers call in
+    from asyncio.to_thread workers and a bot this size never needs a pool."""
 
     def __init__(self, db_path: str):
         self.db_path = db_path
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(_SCHEMA)
+            conn.execute(_ALLOWLIST_SCHEMA)
 
     def get(self, telegram_user_id: int) -> UserRecord | None:
         with sqlite3.connect(self.db_path) as conn:
@@ -66,3 +77,23 @@ class UserStore:
     def delete(self, telegram_user_id: int) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM users WHERE telegram_user_id = ?", (telegram_user_id,))
+
+    def allowed_ids(self) -> frozenset[int]:
+        """Read by the gate on every update. The table holds a handful of rows,
+        so it stays a full read rather than a cache that could go stale."""
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute("SELECT telegram_user_id FROM allowed_users").fetchall()
+        return frozenset(row[0] for row in rows)
+
+    def allow(self, telegram_user_id: int) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO allowed_users (telegram_user_id, added_at) VALUES (?, ?)",
+                (telegram_user_id, int(time.time())),
+            )
+
+    def deny(self, telegram_user_id: int) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "DELETE FROM allowed_users WHERE telegram_user_id = ?", (telegram_user_id,)
+            )

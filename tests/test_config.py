@@ -5,6 +5,7 @@ from recipebot.config import Config
 BASE = {
     "TELEGRAM_TOKEN": "tok",
     "TELEGRAM_ALLOWED_USER_IDS": "12345,999",
+    "TELEGRAM_OWNER_ID": "12345",
     "NOTION_CLIENT_ID": "client-id",
     "NOTION_CLIENT_SECRET": "client-secret",
     "NOTION_REDIRECT_URI": "https://recipebot.atiumaddict.com/oauth/callback",
@@ -147,3 +148,30 @@ def test_no_secret_value_appears_in_the_config_repr(monkeypatch):
     assert "notion-secret-value" not in text
     assert "gemini-secret-value" not in text
     assert "8080" in text
+
+
+def test_the_owner_id_is_read(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="12345")
+
+    assert Config.from_env().owner_id == 12345
+
+
+def test_a_missing_owner_id_fails_at_startup(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID=None)
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
+        Config.from_env()
+
+
+def test_a_non_integer_owner_id_fails_at_startup(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="alex")
+
+    with pytest.raises(RuntimeError, match="alex"):
+        Config.from_env()
+
+
+def test_an_owner_who_is_not_in_the_allowlist_fails_at_startup(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="777")
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
+        Config.from_env()

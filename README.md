@@ -6,7 +6,8 @@ Sync recipes from URLs, Instagram, and other sources into a Notion database.
 
 1. Copy `.env.example` to `.env` and fill in `TELEGRAM_TOKEN`,
    `TELEGRAM_ALLOWED_USER_IDS` (a comma-separated list of Telegram user
-   IDs), `NOTION_CLIENT_ID`/`NOTION_CLIENT_SECRET`/`NOTION_REDIRECT_URI`
+   IDs), `TELEGRAM_OWNER_ID` (your own ID, which must also be in that
+   list), `NOTION_CLIENT_ID`/`NOTION_CLIENT_SECRET`/`NOTION_REDIRECT_URI`
    (from a Notion public integration, install scope "Selected workspaces
    only"), and the model provider's API key.
 2. Start the bot: `docker compose up -d --build`.
@@ -24,11 +25,37 @@ The bot uses Telegram long polling, so it opens no inbound port for
 Telegram traffic. It does open one local port for the Notion OAuth
 callback, proxied over HTTPS by the VPS's shared reverse proxy; see
 [.claude/skills/vps-connection/SKILL.md](.claude/skills/vps-connection/SKILL.md).
-It answers only a Telegram user whose ID is in `TELEGRAM_ALLOWED_USER_IDS`;
-every other user is ignored before any of their messages are read. Send
-`/disconnect` to remove your stored Notion connection at any point. Each
+It answers only an allowed Telegram user; every other user is ignored
+before any of their messages are read. Send `/disconnect` to remove your
+stored Notion connection at any point. Each
 connected user's Notion access and refresh tokens are stored in a SQLite
 file on the `recipebot-data` volume.
+
+## Allowing a user
+
+A user is allowed from either of two places, and the bot admits the union of
+both:
+
+- `TELEGRAM_ALLOWED_USER_IDS` in `.env`, read once at startup. This is the
+  bootstrap list, and it is the one that survives a lost database.
+- The `allowed_users` table on the `recipebot-data` volume, which the owner
+  edits from Telegram and which survives a rebuild.
+
+`TELEGRAM_OWNER_ID` names the single user who may run these commands. Every
+other user, allowed or not, is refused:
+
+| Command | What it does |
+| --- | --- |
+| `/allow <id>` | Adds an ID to the table. |
+| `/deny <id>` | Removes an ID from the table. It never removes an ID that `.env` lists, and it never removes the owner. |
+| `/allowed` | Lists both sources, marking the `.env` ones. |
+
+`/deny` removes access only. It leaves the person's stored Notion connection
+alone, so re-allowing them does not make them reconnect.
+
+To edit the `.env` list instead, from a machine with Tailscale up, run
+`deploy/allow-telegram-user.sh <id>`. That path needs a laptop; the Telegram
+commands do not.
 
 ## Choosing a model provider
 

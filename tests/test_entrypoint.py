@@ -41,9 +41,9 @@ from recipebot import __main__ as entrypoint
 
 
 def test_main_refuses_to_start_without_the_environment(monkeypatch):
-    for name in ("TELEGRAM_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "NOTION_CLIENT_ID",
-                 "NOTION_CLIENT_SECRET", "NOTION_REDIRECT_URI", "LLM_PROVIDER",
-                 "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+    for name in ("TELEGRAM_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_OWNER_ID",
+                 "NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET", "NOTION_REDIRECT_URI",
+                 "LLM_PROVIDER", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):

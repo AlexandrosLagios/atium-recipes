@@ -13,6 +13,7 @@ PROVIDER_KEYS = {
 _VARS = [
     "TELEGRAM_TOKEN",
     "TELEGRAM_ALLOWED_USER_IDS",
+    "TELEGRAM_OWNER_ID",
     "NOTION_CLIENT_ID",
     "NOTION_CLIENT_SECRET",
     "NOTION_REDIRECT_URI",
@@ -33,6 +34,18 @@ def _parse_allowed_ids(raw: str) -> frozenset[int]:
     return frozenset(ids)
 
 
+def _parse_owner_id(raw: str, allowed_user_ids: frozenset[int]) -> int:
+    if not raw.strip().isdigit():
+        raise RuntimeError(f"TELEGRAM_OWNER_ID is not a Telegram user id: {raw!r}")
+    owner_id = int(raw)
+    if owner_id not in allowed_user_ids:
+        raise RuntimeError(
+            "TELEGRAM_OWNER_ID must also appear in TELEGRAM_ALLOWED_USER_IDS, "
+            "because the gate drops the owner's own commands otherwise"
+        )
+    return owner_id
+
+
 @dataclass(frozen=True)
 class Config:
     telegram_token: str = field(repr=False)
@@ -44,6 +57,7 @@ class Config:
     db_path: str
     llm_provider: str
     llm_api_key: str = field(repr=False)
+    owner_id: int = 0
     model_fast: str = ""
     model_strong: str = ""
 
@@ -61,9 +75,10 @@ class Config:
         missing = [name for name in _VARS + [key_var] if not os.environ.get(name)]
         if missing:
             raise RuntimeError(f"missing environment variables: {', '.join(missing)}")
+        allowed_user_ids = _parse_allowed_ids(os.environ["TELEGRAM_ALLOWED_USER_IDS"])
         return cls(
             telegram_token=os.environ["TELEGRAM_TOKEN"],
-            allowed_user_ids=_parse_allowed_ids(os.environ["TELEGRAM_ALLOWED_USER_IDS"]),
+            allowed_user_ids=allowed_user_ids,
             notion_client_id=os.environ["NOTION_CLIENT_ID"],
             notion_client_secret=os.environ["NOTION_CLIENT_SECRET"],
             notion_redirect_uri=os.environ["NOTION_REDIRECT_URI"],
@@ -71,6 +86,7 @@ class Config:
             db_path=os.environ.get("DB_PATH", DEFAULT_DB_PATH),
             llm_provider=provider,
             llm_api_key=os.environ[key_var],
+            owner_id=_parse_owner_id(os.environ["TELEGRAM_OWNER_ID"], allowed_user_ids),
             model_fast=os.environ.get("LLM_MODEL_FAST", ""),
             model_strong=os.environ.get("LLM_MODEL_STRONG", ""),
         )

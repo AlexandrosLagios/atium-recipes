@@ -108,14 +108,17 @@ def first_url(text: str) -> str:
     return match.group() if match else ""
 
 
-def make_gate(allowed_user_ids: frozenset[int]):
+def make_gate(allowed_user_ids: frozenset[int], users):
+    """The environment ids are checked first and never touch the database, so
+    an unreadable database locks out the runtime ids but never the owner."""
+
     async def gate(update, context) -> None:
         seen_id = "unknown"
         try:
             user = getattr(update, "effective_user", None)
             if user is not None:
                 seen_id = user.id
-            allowed = seen_id in allowed_user_ids
+            allowed = seen_id in allowed_user_ids or seen_id in users.allowed_ids()
         except Exception:
             allowed = False
         if not allowed:
@@ -514,6 +517,75 @@ async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("Disconnected. Send me a message to connect a Notion account again.")
 
 
+OWNER_ONLY_MESSAGE = "That command is for the bot owner only."
+BAD_ID_MESSAGE = "Send a numeric Telegram user id, like /allow 6529645381."
+
+
+def _is_owner(update, context) -> bool:
+    return update.effective_user.id == context.bot_data["cfg"].owner_id
+
+
+def _target_id(context) -> int | None:
+    raw = (context.args or [""])[0]
+    return int(raw) if raw.isdigit() else None
+
+
+async def on_allow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_owner(update, context):
+        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        return
+    target = _target_id(context)
+    if target is None:
+        await update.message.reply_text(BAD_ID_MESSAGE)
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    if target in cfg.allowed_user_ids or target in users.allowed_ids():
+        await update.message.reply_text(f"{target} is already allowed.")
+        return
+    users.allow(target)
+    log.info("owner %s allowed %s", update.effective_user.id, target)
+    await update.message.reply_text(f"Allowed {target}. They can message the bot now.")
+
+
+async def on_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_owner(update, context):
+        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        return
+    target = _target_id(context)
+    if target is None:
+        await update.message.reply_text(BAD_ID_MESSAGE)
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    if target == cfg.owner_id:
+        await update.message.reply_text("That is the owner id. Refusing to lock you out.")
+        return
+    if target in cfg.allowed_user_ids:
+        await update.message.reply_text(
+            f"{target} comes from TELEGRAM_ALLOWED_USER_IDS. "
+            "Remove it there and restart the bot."
+        )
+        return
+    if target not in users.allowed_ids():
+        await update.message.reply_text(f"{target} is not allowed.")
+        return
+    users.deny(target)
+    log.info("owner %s denied %s", update.effective_user.id, target)
+    await update.message.reply_text(f"Denied {target}.")
+
+
+async def on_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_owner(update, context):
+        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        return
+    cfg = context.bot_data["cfg"]
+    users = context.bot_data["users"]
+    lines = [f"{user_id} (env)" for user_id in sorted(cfg.allowed_user_ids)]
+    lines += [str(user_id) for user_id in sorted(users.allowed_ids() - cfg.allowed_user_ids)]
+    await update.message.reply_text("Allowed users:\n" + "\n".join(lines))
+
+
 def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:
     builder = Application.builder().token(cfg.telegram_token)
     if post_init is not None:
@@ -524,11 +596,14 @@ def build_application(cfg: Config, users, extractor: Extractor, *, post_init=Non
     application.bot_data["extractor"] = extractor
 
     application.add_handler(
-        TypeHandler(Update, make_gate(cfg.allowed_user_ids), block=True), group=-1
+        TypeHandler(Update, make_gate(cfg.allowed_user_ids, users), block=True), group=-1
     )
     application.add_error_handler(on_error)
     application.add_handler(CommandHandler("start", on_start))
     application.add_handler(CommandHandler("disconnect", on_disconnect))
+    application.add_handler(CommandHandler("allow", on_allow))
+    application.add_handler(CommandHandler("deny", on_deny))
+    application.add_handler(CommandHandler("allowed", on_allowed))
     application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(
         MessageHandler(
