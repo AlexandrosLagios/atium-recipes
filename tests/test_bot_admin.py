@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from recipebot import bot
 from recipebot.config import Config
@@ -38,16 +39,8 @@ class FakeAllowlist:
         self.ids.discard(telegram_user_id)
 
 
-class FakeMessage:
-    def __init__(self):
-        self.replies = []
-
-    async def reply_text(self, text, **kwargs):
-        self.replies.append(text)
-
-
 def an_update(user_id):
-    message = FakeMessage()
+    message = SimpleNamespace(reply_text=AsyncMock())
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id),
         message=message,
@@ -58,12 +51,15 @@ def an_update(user_id):
 def an_edited_update(user_id):
     """An edited message reaches a CommandHandler with update.message unset,
     because the default filter is UpdateType.MESSAGES."""
-    message = FakeMessage()
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id),
         message=None,
-        effective_message=message,
+        effective_message=SimpleNamespace(reply_text=AsyncMock()),
     )
+
+
+def last_reply(update) -> str:
+    return update.effective_message.reply_text.call_args[0][0]
 
 
 def a_context(allowlist, args, cfg=None):
@@ -77,7 +73,7 @@ async def run(handler, user_id, args, allowlist=None, cfg=None):
     allowlist = allowlist if allowlist is not None else FakeAllowlist()
     update = an_update(user_id)
     await handler(update, a_context(allowlist, args, cfg))
-    return update.message.replies[-1], allowlist
+    return last_reply(update), allowlist
 
 
 async def test_the_owner_allows_a_new_id():
@@ -189,7 +185,7 @@ async def test_an_edited_command_still_allows_and_still_answers():
     await bot.on_allow(update, a_context(allowlist, [str(NEWCOMER)]))
 
     assert allowlist.allowed_ids() == frozenset({NEWCOMER})
-    assert str(NEWCOMER) in update.effective_message.replies[-1]
+    assert str(NEWCOMER) in last_reply(update)
 
 
 async def test_an_edited_command_from_a_guest_still_answers():
@@ -197,7 +193,7 @@ async def test_an_edited_command_from_a_guest_still_answers():
 
     await bot.on_deny(update, a_context(FakeAllowlist(), [str(NEWCOMER)]))
 
-    assert "owner" in update.effective_message.replies[-1].lower()
+    assert "owner" in last_reply(update).lower()
 
 
 async def test_an_edited_listing_command_still_answers():
@@ -205,4 +201,4 @@ async def test_an_edited_listing_command_still_answers():
 
     await bot.on_allowed(update, a_context(FakeAllowlist({NEWCOMER}), []))
 
-    assert str(NEWCOMER) in update.effective_message.replies[-1]
+    assert str(NEWCOMER) in last_reply(update)

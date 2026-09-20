@@ -108,17 +108,21 @@ def first_url(text: str) -> str:
     return match.group() if match else ""
 
 
-def make_gate(allowed_user_ids: frozenset[int], users):
-    """The environment ids are checked first and never touch the database, so
-    an unreadable database locks out the runtime ids but never the owner."""
+def is_allowed(user_id, allowed_user_ids: frozenset[int], users) -> bool:
+    """The one authorization rule. The environment ids are checked first and
+    never touch the database, so an unreadable database locks out the ids the
+    owner added at runtime but never the owner."""
+    return user_id in allowed_user_ids or user_id in users.allowed_ids()
 
+
+def make_gate(allowed_user_ids: frozenset[int], users):
     async def gate(update, context) -> None:
         seen_id = "unknown"
         try:
             user = getattr(update, "effective_user", None)
             if user is not None:
                 seen_id = user.id
-            allowed = seen_id in allowed_user_ids or seen_id in users.allowed_ids()
+            allowed = is_allowed(seen_id, allowed_user_ids, users)
         except Exception:
             allowed = False
         if not allowed:
@@ -437,7 +441,7 @@ async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if users.get(update.effective_user.id) is None:
         await send_connect_button(update, context)
         return
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "Send me a recipe link, an Instagram or TikTok post, a photo, a PDF, or pasted text."
     )
 
@@ -514,7 +518,9 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.bot_data["users"].delete(update.effective_user.id)
-    await update.message.reply_text("Disconnected. Send me a message to connect a Notion account again.")
+    await update.effective_message.reply_text(
+        "Disconnected. Send me a message to connect a Notion account again."
+    )
 
 
 OWNER_ONLY_MESSAGE = "That command is for the bot owner only."
@@ -541,7 +547,7 @@ async def on_allow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
-    if target in cfg.allowed_user_ids or target in users.allowed_ids():
+    if is_allowed(target, cfg.allowed_user_ids, users):
         await update.effective_message.reply_text(f"{target} is already allowed.")
         return
     users.allow(target)

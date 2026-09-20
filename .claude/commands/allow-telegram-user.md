@@ -4,7 +4,12 @@ argument-hint: <telegram-user-id>
 allowed-tools: Bash
 ---
 
-Add Telegram user id `$1` to the deployed bot's allowlist.
+Add Telegram user id `$1` to `TELEGRAM_ALLOWED_USER_IDS` on the VPS.
+
+Use this only to bootstrap or to recover: the bot is down, or the owner is not
+allowed yet. For a routine grant, the owner sends `/allow $1` to the bot
+instead, which needs no laptop. Say so and stop if the bot is up and the user
+did not ask for the env-var path specifically.
 
 1. Check Tailscale, because SSH to the VPS answers on Tailscale only. Run
    `/Applications/Tailscale.app/Contents/MacOS/Tailscale status`. If it reports

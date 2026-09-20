@@ -94,6 +94,11 @@ refuses an id that is not a number. The allowlist is a trust boundary, so read
 the value back before you tell the user the id is live. The `/allow-telegram-user`
 command runs the same script and checks Tailscale first.
 
+Use this path only to bootstrap or to recover. The owner grants routine access
+by sending `/allow <id>` to the bot, which writes to the `allowed_users` table
+on the `recipebot-data` volume and needs no SSH. That path fails when the bot
+is down, which is what this script is for.
+
 Read the log:
 
 ```bash

@@ -1,5 +1,4 @@
 import sqlite3
-import time
 from dataclasses import dataclass
 
 _SCHEMA = """
@@ -16,8 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 _ALLOWLIST_SCHEMA = """
 CREATE TABLE IF NOT EXISTS allowed_users (
-    telegram_user_id INTEGER PRIMARY KEY,
-    added_at INTEGER NOT NULL
+    telegram_user_id INTEGER PRIMARY KEY
 )
 """
 
@@ -79,8 +77,9 @@ class UserStore:
             conn.execute("DELETE FROM users WHERE telegram_user_id = ?", (telegram_user_id,))
 
     def allowed_ids(self) -> frozenset[int]:
-        """Read by the gate on every update. The table holds a handful of rows,
-        so it stays a full read rather than a cache that could go stale."""
+        """Read by the gate for a sender the environment does not already list.
+        The table holds a handful of rows, so it stays a full read rather than
+        a cache that could go stale."""
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute("SELECT telegram_user_id FROM allowed_users").fetchall()
         return frozenset(row[0] for row in rows)
@@ -88,8 +87,8 @@ class UserStore:
     def allow(self, telegram_user_id: int) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO allowed_users (telegram_user_id, added_at) VALUES (?, ?)",
-                (telegram_user_id, int(time.time())),
+                "INSERT OR IGNORE INTO allowed_users (telegram_user_id) VALUES (?)",
+                (telegram_user_id,),
             )
 
     def deny(self, telegram_user_id: int) -> None:

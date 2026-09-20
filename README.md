@@ -53,9 +53,10 @@ other user, allowed or not, is refused:
 `/deny` removes access only. It leaves the person's stored Notion connection
 alone, so re-allowing them does not make them reconnect.
 
-To edit the `.env` list instead, from a machine with Tailscale up, run
-`deploy/allow-telegram-user.sh <id>`. That path needs a laptop; the Telegram
-commands do not.
+`deploy/allow-telegram-user.sh <id>` edits the `.env` list instead, over SSH
+from a machine with Tailscale up. It is the bootstrap and recovery path, for
+when the bot is down or the owner is not allowed yet. Every routine grant goes
+through `/allow`, which needs no laptop.
 
 ## Choosing a model provider
 

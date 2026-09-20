@@ -170,15 +170,24 @@ def test_a_non_integer_owner_id_fails_at_startup(monkeypatch):
         Config.from_env()
 
 
-def test_an_owner_who_is_not_in_the_allowlist_fails_at_startup(monkeypatch):
+def test_an_owner_outside_the_allowlist_is_allowed_anyway(monkeypatch):
     set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="777")
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
-        Config.from_env()
+    cfg = Config.from_env()
+
+    assert cfg.owner_id == 777
+    assert cfg.allowed_user_ids == frozenset({12345, 999, 777})
 
 
 def test_a_superscript_owner_id_fails_with_a_clear_error(monkeypatch):
     set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="\u00b2")
 
     with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
+        Config.from_env()
+
+
+def test_a_superscript_in_the_allowlist_fails_with_a_clear_error(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_ALLOWED_USER_IDS="12345,\u00b2")
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_ALLOWED_USER_IDS"):
         Config.from_env()

@@ -427,3 +427,28 @@ async def test_disconnect_deletes_the_row_and_confirms():
 
     assert users.deleted == [1]
     assert "disconnect" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_disconnect_confirms_even_when_the_command_was_an_edit():
+    """A CommandHandler also fires on an edited message, where update.message
+    is None. The row is already deleted by then, so the reply has to survive."""
+    update = make_update(text="/disconnect")
+    update.message = None
+    users = FakeUsers(a_user_record())
+    context = make_context(FakeStore(), object())
+    context.bot_data["users"] = users
+
+    await bot.on_disconnect(update, context)
+
+    assert users.deleted == [1]
+    assert "disconnect" in update.effective_message.reply_text.call_args[0][0].lower()
+
+
+async def test_start_answers_a_connected_user_even_when_the_command_was_an_edit():
+    update = make_update(text="/start")
+    update.message = None
+    context = make_context(FakeStore(), object())
+
+    await bot.on_start(update, context)
+
+    assert "recipe link" in update.effective_message.reply_text.call_args[0][0]

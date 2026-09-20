@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Add a Telegram user id to the deployed bot's allowlist, then restart the bot.
+# Add a Telegram user id to TELEGRAM_ALLOWED_USER_IDS, then restart the bot.
+#
+# This is the bootstrap and recovery path, for when the bot is down or the
+# owner is not allowed yet. For a routine grant, send /allow to the bot: it
+# writes to the database, needs no laptop and no Tailscale, and /deny reverses
+# it. This script has no /deny counterpart on purpose.
 set -euo pipefail
 
 HOST="${RECIPEIENT_HOST:-alex@100.71.143.23}"
