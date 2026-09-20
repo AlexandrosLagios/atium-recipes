@@ -175,3 +175,10 @@ def test_an_owner_who_is_not_in_the_allowlist_fails_at_startup(monkeypatch):
 
     with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
         Config.from_env()
+
+
+def test_a_superscript_owner_id_fails_with_a_clear_error(monkeypatch):
+    set_env(monkeypatch, GEMINI_API_KEY="g-key", TELEGRAM_OWNER_ID="\u00b2")
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_OWNER_ID"):
+        Config.from_env()

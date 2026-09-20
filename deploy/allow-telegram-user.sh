@@ -35,7 +35,9 @@ case "$id" in
         ;;
 esac
 
-result=$(ssh "$HOST" "bash -s -- --here $id \$HOME/$REPO_DIR/.env" < "$0")
+# Take the last line only: a first Tailscale SSH in a while prefixes the
+# session with an authentication notice.
+result=$(ssh "$HOST" "bash -s -- --here $id \$HOME/$REPO_DIR/.env" < "$0" | tail -1)
 echo "$id: $result"
 [ "$result" = changed ] || exit 0
 

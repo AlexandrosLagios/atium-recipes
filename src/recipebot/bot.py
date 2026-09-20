@@ -526,64 +526,65 @@ def _is_owner(update, context) -> bool:
 
 
 def _target_id(context) -> int | None:
+    # isdecimal, not isdigit: isdigit accepts superscripts that int() rejects.
     raw = (context.args or [""])[0]
-    return int(raw) if raw.isdigit() else None
+    return int(raw) if raw.isdecimal() else None
 
 
 async def on_allow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_owner(update, context):
-        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
         return
     target = _target_id(context)
     if target is None:
-        await update.message.reply_text(BAD_ID_MESSAGE)
+        await update.effective_message.reply_text(BAD_ID_MESSAGE)
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     if target in cfg.allowed_user_ids or target in users.allowed_ids():
-        await update.message.reply_text(f"{target} is already allowed.")
+        await update.effective_message.reply_text(f"{target} is already allowed.")
         return
     users.allow(target)
     log.info("owner %s allowed %s", update.effective_user.id, target)
-    await update.message.reply_text(f"Allowed {target}. They can message the bot now.")
+    await update.effective_message.reply_text(f"Allowed {target}. They can message the bot now.")
 
 
 async def on_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_owner(update, context):
-        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
         return
     target = _target_id(context)
     if target is None:
-        await update.message.reply_text(BAD_ID_MESSAGE)
+        await update.effective_message.reply_text(BAD_ID_MESSAGE)
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     if target == cfg.owner_id:
-        await update.message.reply_text("That is the owner id. Refusing to lock you out.")
+        await update.effective_message.reply_text("That is the owner id. Refusing to lock you out.")
         return
     if target in cfg.allowed_user_ids:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"{target} comes from TELEGRAM_ALLOWED_USER_IDS. "
             "Remove it there and restart the bot."
         )
         return
     if target not in users.allowed_ids():
-        await update.message.reply_text(f"{target} is not allowed.")
+        await update.effective_message.reply_text(f"{target} is not allowed.")
         return
     users.deny(target)
     log.info("owner %s denied %s", update.effective_user.id, target)
-    await update.message.reply_text(f"Denied {target}.")
+    await update.effective_message.reply_text(f"Denied {target}.")
 
 
 async def on_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_owner(update, context):
-        await update.message.reply_text(OWNER_ONLY_MESSAGE)
+        await update.effective_message.reply_text(OWNER_ONLY_MESSAGE)
         return
     cfg = context.bot_data["cfg"]
     users = context.bot_data["users"]
     lines = [f"{user_id} (env)" for user_id in sorted(cfg.allowed_user_ids)]
     lines += [str(user_id) for user_id in sorted(users.allowed_ids() - cfg.allowed_user_ids)]
-    await update.message.reply_text("Allowed users:\n" + "\n".join(lines))
+    await update.effective_message.reply_text("Allowed users:\n" + "\n".join(lines))
 
 
 def build_application(cfg: Config, users, extractor: Extractor, *, post_init=None) -> Application:

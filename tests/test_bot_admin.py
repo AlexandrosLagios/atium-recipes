@@ -55,6 +55,17 @@ def an_update(user_id):
     )
 
 
+def an_edited_update(user_id):
+    """An edited message reaches a CommandHandler with update.message unset,
+    because the default filter is UpdateType.MESSAGES."""
+    message = FakeMessage()
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=user_id),
+        message=None,
+        effective_message=message,
+    )
+
+
 def a_context(allowlist, args, cfg=None):
     return SimpleNamespace(
         bot_data={"cfg": cfg or a_config(), "users": allowlist},
@@ -162,3 +173,36 @@ async def test_an_allowed_guest_cannot_list_the_allowlist():
 
     assert str(NEWCOMER) not in reply
     assert "owner" in reply.lower()
+
+
+async def test_a_superscript_digit_is_refused_rather_than_crashing():
+    reply, allowlist = await run(bot.on_allow, OWNER, ["\u00b2"])
+
+    assert allowlist.allowed_ids() == frozenset()
+    assert "numeric" in reply.lower()
+
+
+async def test_an_edited_command_still_allows_and_still_answers():
+    allowlist = FakeAllowlist()
+    update = an_edited_update(OWNER)
+
+    await bot.on_allow(update, a_context(allowlist, [str(NEWCOMER)]))
+
+    assert allowlist.allowed_ids() == frozenset({NEWCOMER})
+    assert str(NEWCOMER) in update.effective_message.replies[-1]
+
+
+async def test_an_edited_command_from_a_guest_still_answers():
+    update = an_edited_update(GUEST)
+
+    await bot.on_deny(update, a_context(FakeAllowlist(), [str(NEWCOMER)]))
+
+    assert "owner" in update.effective_message.replies[-1].lower()
+
+
+async def test_an_edited_listing_command_still_answers():
+    update = an_edited_update(OWNER)
+
+    await bot.on_allowed(update, a_context(FakeAllowlist({NEWCOMER}), []))
+
+    assert str(NEWCOMER) in update.effective_message.replies[-1]

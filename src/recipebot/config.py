@@ -35,7 +35,7 @@ def _parse_allowed_ids(raw: str) -> frozenset[int]:
 
 
 def _parse_owner_id(raw: str, allowed_user_ids: frozenset[int]) -> int:
-    if not raw.strip().isdigit():
+    if not raw.strip().isdecimal():
         raise RuntimeError(f"TELEGRAM_OWNER_ID is not a Telegram user id: {raw!r}")
     owner_id = int(raw)
     if owner_id not in allowed_user_ids:
