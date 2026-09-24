@@ -32,6 +32,10 @@ TEXT = {
         "el": "Σύνδεσε τον λογαριασμό σου στο Notion για να αποθηκεύονται εκεί οι συνταγές.",
     },
     "connect_button": {"en": "Connect Notion", "el": "Σύνδεση με το Notion"},
+    "databases_missing": {
+        "en": "I can't find your Recipes and Ingredients databases in Notion. Connect again and share a page, and I'll make a new pair there.",
+        "el": "Δεν βρίσκω τις βάσεις Recipes και Ingredients στο Notion. Σύνδεσε ξανά και μοιράσου μια σελίδα, και θα φτιάξω εκεί καινούριες.",
+    },
     "connected": {
         "en": "Connected to '{page}'. Which language should I write your recipes in?",
         "el": "Συνδέθηκε με «{page}». Σε ποια γλώσσα να γράφω τις συνταγές σου;",

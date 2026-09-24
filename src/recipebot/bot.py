@@ -85,12 +85,18 @@ def language_for(update, context) -> str:
 
 
 def connect_prompt(
-    chat_id: int, cfg: Config, language: str
+    chat_id: int, cfg: Config, language: str, key: str = "connect"
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """The sentence and the button that start a connect. Three paths send it:
-    a first message, a revoked token found mid-save, and a stale language tap."""
+    """The sentence and the button that start a connect. Four paths send it:
+    a first message, a revoked token found mid-save, a stale language tap, and
+    a pair of databases the user deleted."""
     url = callback_server.start_connect(chat_id, cfg, language)
-    return t(language, "connect"), connect_markup(url, language)
+    return t(language, key), connect_markup(url, language)
+
+
+class DatabasesMissing(LookupError):
+    """The user deleted or unshared their Recipes or Ingredients database.
+    Only a fresh connect, which builds a new pair, gets them saving again."""
 
 
 @dataclass
@@ -150,12 +156,16 @@ async def call_with_reconnect(chat_id: int, context, fn):
     record = users.get(chat_id)
     if record is None:
         raise LookupError(chat_id)
+    store = NotionStore.from_user(record)
     try:
-        return await asyncio.to_thread(fn, NotionStore.from_user(record))
+        return await asyncio.to_thread(fn, store)
     except APIResponseError as exc:
         if exc.status != 401 or not record.notion_refresh_token:
             if exc.status == 401:
                 users.delete(chat_id)
+            # The row stays: the connect overwrites it, and keeps the language.
+            elif exc.status == 404 and await asyncio.to_thread(store.databases_gone):
+                raise DatabasesMissing(chat_id) from exc
             raise
         tokens = await asyncio.to_thread(
             oauth.refresh_access_token, cfg.notion_client_id, cfg.notion_client_secret, record.notion_refresh_token
@@ -419,8 +429,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 store, preview.recipe, preview.vocab, merges, preview.page_id, preview.language
             ),
         )
-    except LookupError:
-        text, markup = connect_prompt(chat_id, context.bot_data["cfg"], preview.language)
+    except LookupError as exc:
+        key = "databases_missing" if isinstance(exc, DatabasesMissing) else "connect"
+        text, markup = connect_prompt(chat_id, context.bot_data["cfg"], preview.language, key)
         await query.edit_message_text(text, reply_markup=markup)
         return
     except Exception:
@@ -467,8 +478,14 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user is None or not is_allowed(user.id, cfg.allowed_user_ids, context.bot_data["users"]):
         return
     message = getattr(update, "effective_message", None)
-    if message is not None:
-        await message.reply_text(t(language_for(update, context), "error"))
+    if message is None:
+        return
+    language = language_for(update, context)
+    if isinstance(context.error, DatabasesMissing):
+        text, markup = connect_prompt(user.id, cfg, language, "databases_missing")
+        await message.reply_text(text, reply_markup=markup)
+        return
+    await message.reply_text(t(language, "error"))
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

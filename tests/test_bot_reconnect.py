@@ -61,7 +61,7 @@ def _api_error(status):
     # notion-client 3.1.0's APIResponseError takes the parsed fields
     # directly, not an httpx.Response, so build it from those.
     return APIResponseError(
-        code="unauthorized" if status == 401 else "internal_server_error",
+        code={401: "unauthorized", 404: "object_not_found"}.get(status, "internal_server_error"),
         status=status,
         message="revoked",
         headers=httpx.Headers(),
@@ -136,3 +136,29 @@ async def test_call_with_reconnect_raises_lookuperror_for_an_unknown_chat():
 
     with pytest.raises(LookupError):
         await bot.call_with_reconnect(1, context, lambda store: "ok")
+
+
+async def test_call_with_reconnect_offers_a_fresh_connect_once_the_databases_are_gone(monkeypatch):
+    users = FakeUsers(a_user_record(language="el"))
+    context = a_context(users)
+    monkeypatch.setattr(bot.NotionStore, "databases_gone", lambda self: True)
+
+    def fn(store):
+        raise _api_error(404)
+
+    with pytest.raises(bot.DatabasesMissing):
+        await bot.call_with_reconnect(1, context, fn)
+
+    # The row stays, so the reconnect keeps the language already chosen.
+    assert users.deleted == []
+
+
+async def test_call_with_reconnect_re_raises_a_404_for_a_page_while_the_databases_stand(monkeypatch):
+    context = a_context(FakeUsers(a_user_record()))
+    monkeypatch.setattr(bot.NotionStore, "databases_gone", lambda self: False)
+
+    def fn(store):
+        raise _api_error(404)
+
+    with pytest.raises(APIResponseError):
+        await bot.call_with_reconnect(1, context, fn)

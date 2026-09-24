@@ -336,6 +336,20 @@ async def test_on_error_replies_to_a_user_allowed_only_in_the_database():
     update.message.reply_text.assert_awaited_once_with(t("en", "error"))
 
 
+async def test_on_error_offers_the_connect_button_when_the_databases_are_gone(monkeypatch):
+    monkeypatch.setattr(bot.callback_server, "start_connect", lambda *a, **k: "https://notion.example/authorize")
+    update = make_update(text="hi")
+    context = make_context(FakeStore(), object())
+    context.error = bot.DatabasesMissing(1)
+
+    await bot.on_error(update, context)
+
+    call = update.message.reply_text.call_args
+    assert call[0][0] == t("en", "databases_missing")
+    buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons[0].url == "https://notion.example/authorize"
+
+
 async def test_on_error_stays_silent_for_a_foreign_user():
     update = make_update(text="hi")
     update.effective_user = type("User", (), {"id": 999})()

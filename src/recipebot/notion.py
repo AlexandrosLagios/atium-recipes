@@ -238,6 +238,10 @@ def _find_existing_data_source(client, parent_page_id: str, title: str) -> str |
             kwargs["start_cursor"] = cursor
         page = client.blocks.children.list(**kwargs)
         for block in page["results"]:
+            # A trashed database answers every call with a 404, so reusing it
+            # would hand a reconnecting user straight back the pair they lost.
+            if block.get("in_trash"):
+                continue
             if block.get("type") == "child_database" and block["child_database"]["title"] == title:
                 db = client.databases.retrieve(database_id=block["id"])
                 return db["data_sources"][0]["id"]
@@ -367,6 +371,16 @@ class NotionStore:
     @classmethod
     def from_user(cls, record) -> "NotionStore":
         return cls(Client(auth=record.notion_access_token), record.recipes_ds, record.ingredients_ds)
+
+    def databases_gone(self) -> bool:
+        """Whether the user deleted or unshared either database. A 404 alone
+        cannot say, because a deleted recipe page answers with one too."""
+        try:
+            for data_source_id in (self.recipes_ds, self.ingredients_ds):
+                self.client.data_sources.retrieve(data_source_id=data_source_id)
+        except APIResponseError as exc:
+            return exc.status == 404
+        return False
 
     def _all_pages(self, data_source_id: str, **kwargs) -> list[dict]:
         pages, cursor = [], None

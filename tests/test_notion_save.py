@@ -1,3 +1,6 @@
+import httpx
+from notion_client.errors import APIResponseError
+
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import NotionStore, Vocabulary
 from recipebot.notion import create_user_databases, load_schema_fixture
@@ -293,3 +296,44 @@ def test_from_user_builds_a_store_from_a_user_record():
 
     assert store.recipes_ds == "ds-r"
     assert store.ingredients_ds == "ds-i"
+
+
+def test_create_user_databases_builds_a_new_pair_beside_a_trashed_one():
+    trashed = [
+        {"type": "child_database", "id": "old1", "in_trash": True, "child_database": {"title": "Ingredients"}},
+        {"type": "child_database", "id": "old2", "in_trash": True, "child_database": {"title": "Recipes"}},
+    ]
+    reciprocal_schema = {
+        "properties": {"Recipes": {"type": "relation", "relation": {"data_source_id": "ds2"}}}
+    }
+    client = FakeSchemaClient(existing_blocks=trashed, reciprocal_schema=reciprocal_schema)
+
+    recipes_ds, ingredients_ds = create_user_databases(client, "page-1", FIXTURE)
+
+    assert (recipes_ds, ingredients_ds) == ("ds2", "ds1")
+    assert len(client.databases.created) == 2
+
+
+class FakeRetrieveOnly:
+    def __init__(self, missing=()):
+        self.missing = set(missing)
+
+    def retrieve(self, data_source_id):
+        if data_source_id in self.missing:
+            raise APIResponseError(
+                code="object_not_found", status=404, message="gone", headers=httpx.Headers(), raw_body_text=""
+            )
+        return {"id": data_source_id}
+
+
+def a_store_missing(*missing) -> NotionStore:
+    client = type("C", (), {"data_sources": FakeRetrieveOnly(missing)})()
+    return NotionStore(client, "ds-r", "ds-i")
+
+
+def test_databases_gone_is_false_while_both_databases_answer():
+    assert a_store_missing().databases_gone() is False
+
+
+def test_databases_gone_is_true_when_either_database_is_missing():
+    assert a_store_missing("ds-i").databases_gone() is True
