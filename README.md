@@ -17,9 +17,9 @@ Sync recipes from URLs, Instagram, and other sources into a Notion database.
 4. The confirmation asks which language to write in, English or Greek. The
    choice covers both the recipes and the bot's own replies, and `/language`
    changes it later. Until the choice is made the bot follows the Telegram
-   client's own language. Cuisine, Meal, Difficulty and Category stay in
-   English whatever the choice, because they are the Notion databases' select
-   options.
+   client's own language. Cuisine, Meal, Category, Protein, Difficulty and the
+   ingredient Category stay in English whatever the choice, because they are
+   the Notion databases' select options.
 
 Share a link the bot already saved and it offers to reimport that page:
 **Refetch link** reads the site again, **Reuse saved text** runs the
@@ -80,6 +80,25 @@ Every extraction starts on the fast model and escalates to the strong one
 only when the fast model returns nothing usable. `LLM_MODEL_FAST` and
 `LLM_MODEL_STRONG` override the two model ids, so a model change needs no
 code change.
+
+## Backfilling Category and Protein
+
+The bot sets Category (the dish type) and Protein on every recipe it saves. To
+tag the recipes that were saved before these properties existed, run the
+backfill inside the container on the VPS:
+
+```bash
+docker compose exec recipebot python -m recipebot.backfill
+```
+
+The command is a dry run. It lists each connected user's untagged recipes with
+the values the model proposes. To write the values, run the command again with
+`--apply`.
+
+The backfill fills only an empty property, so a value set by hand stays. It
+skips a user whose Notion token has expired, because only the bot refreshes a
+token. That user's next message refreshes the token, and a second run covers
+the user.
 
 ## Deployment
 

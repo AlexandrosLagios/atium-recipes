@@ -24,6 +24,8 @@ class Vocabulary(BaseModel):
     cuisines: list[str] = []
     meals: list[str] = []
     categories: list[str] = []
+    recipe_categories: list[str] = []
+    proteins: list[str] = []
 
 
 class IngredientPlan(BaseModel):
@@ -90,6 +92,20 @@ def _cuisine_option(value: str, known: list[str]) -> str:
 def _meal_options(names: list[str], known: list[str]) -> list[str]:
     matched = (_known_spelling(_clean_option_name(name), known) for name in names)
     return list(dict.fromkeys(name for name in matched if name))
+
+
+# Category and Protein are fixed vocabularies like Meal, so a value that matches
+# no live option is left out rather than minted as a new option.
+def classified_properties(category: str, protein: str, vocab: Vocabulary) -> dict:
+    properties = {}
+    for prop, value, known in (
+        ("Category", category, vocab.recipe_categories),
+        ("Protein", protein, vocab.proteins),
+    ):
+        name = _known_spelling(_clean_option_name(value), known)
+        if name:
+            properties[prop] = {"select": {"name": name}}
+    return properties
 
 
 def _title_of(page: dict) -> str:
@@ -202,6 +218,7 @@ def _recipe_properties(
     cuisine = _cuisine_option(recipe.cuisine, vocab.cuisines)
     if cuisine:
         properties["Cuisine"] = {"select": {"name": cuisine}}
+    properties.update(classified_properties(recipe.category, recipe.protein, vocab))
     if recipe.keeps_days:
         properties["Keeps (days)"] = {"number": recipe.keeps_days}
     if recipe.source_url:
@@ -407,7 +424,12 @@ class NotionStore:
             cuisines=_options(recipes_schema, "Cuisine"),
             meals=_options(recipes_schema, "Meal"),
             categories=_options(ingredients_schema, "Category"),
+            recipe_categories=_options(recipes_schema, "Category"),
+            proteins=_options(recipes_schema, "Protein"),
         )
+
+    def recipe_pages(self) -> list[dict]:
+        return self._all_pages(self.recipes_ds)
 
     # ponytail: a select property that was missing entirely reports no options
     # on this one call, because the schema above predates the backfill. The next
@@ -526,6 +548,8 @@ class NotionStore:
         # carries the one it was found by.
         properties = {
             "Cuisine": {"select": None},
+            "Category": {"select": None},
+            "Protein": {"select": None},
             "Keeps (days)": {"number": None},
             **_recipe_properties(recipe, page_ids, vocab),
         }

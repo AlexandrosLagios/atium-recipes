@@ -163,3 +163,13 @@ def test_update_recipe_writes_a_cuisine_and_a_keeps_the_new_extraction_found():
     properties = client.pages.updated[0]["properties"]
     assert properties["Cuisine"] == {"select": {"name": "Chinese"}}
     assert properties["Keeps (days)"] == {"number": 4}
+
+
+def test_update_recipe_clears_a_category_and_a_protein_the_new_extraction_dropped():
+    store, client = a_store({"page-1": [a_paragraph("b1", "stale")]})
+
+    store.update_recipe("page-1", a_recipe(category="", protein=""), VOCAB)
+
+    properties = client.pages.updated[0]["properties"]
+    assert properties["Category"] == {"select": None}
+    assert properties["Protein"] == {"select": None}

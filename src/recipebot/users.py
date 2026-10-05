@@ -74,6 +74,12 @@ class UserStore:
             ).fetchone()
         return UserRecord(**{column: row[column] for column in _COLUMNS}) if row else None
 
+    def all(self) -> list[UserRecord]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM users").fetchall()
+        return [UserRecord(**{column: row[column] for column in _COLUMNS}) for row in rows]
+
     def save(self, record: UserRecord) -> None:
         placeholders = ", ".join("?" for _ in _COLUMNS)
         updates = ", ".join(f"{column} = excluded.{column}" for column in _COLUMNS[1:])

@@ -56,6 +56,12 @@ lists and property names can drift):
      own cuisine. Cuisine is an open list, so add a new option rather than
      filing a dish under a neighbouring country, and say so in your report.
    - `Meal`: pick from the data source's existing multi-select options only.
+   - `Category`: the one existing option that names the dish on the plate.
+     Beef Ho Fun is `Noodles`, not `Stir-fry`. Leave it empty when no option
+     fits.
+   - `Protein`: the one existing option the dish is built around. Use
+     `Vegetarian` only when no other option fits and the dish holds no meat or
+     fish.
    - `Difficulty` (`Easy` or `Hard`), `Time (min)`, `Servings`
    - `Keeps (days)`: how long the cooked dish keeps in the fridge. Use the
      figure the source states, otherwise estimate it. Leave it empty when the

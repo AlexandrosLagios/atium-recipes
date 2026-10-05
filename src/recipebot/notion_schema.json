@@ -66,6 +66,85 @@
   },
   "recipes": {
     "properties": {
+      "Category": {
+        "description": null,
+        "name": "Category",
+        "select": {
+          "options": [
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Stir-fry"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Noodles"
+            },
+            {
+              "color": "pink",
+              "description": null,
+              "name": "Dumplings"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Rice bowl"
+            },
+            {
+              "color": "red",
+              "description": null,
+              "name": "Braise and stew"
+            },
+            {
+              "color": "gray",
+              "description": null,
+              "name": "Roast and grill"
+            },
+            {
+              "color": "green",
+              "description": null,
+              "name": "Salad"
+            },
+            {
+              "color": "purple",
+              "description": null,
+              "name": "Pickle"
+            },
+            {
+              "color": "default",
+              "description": null,
+              "name": "Fried bites"
+            },
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Baking and sweets"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Pasta"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Curry"
+            },
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Soup"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Sandwich and wrap"
+            }
+          ]
+        },
+        "type": "select"
+      },
       "Corrections": {
         "description": null,
         "name": "Corrections",
@@ -222,6 +301,60 @@
         "name": "Name",
         "title": {},
         "type": "title"
+      },
+      "Protein": {
+        "description": null,
+        "name": "Protein",
+        "select": {
+          "options": [
+            {
+              "color": "red",
+              "description": null,
+              "name": "Beef"
+            },
+            {
+              "color": "pink",
+              "description": null,
+              "name": "Pork"
+            },
+            {
+              "color": "yellow",
+              "description": null,
+              "name": "Chicken"
+            },
+            {
+              "color": "brown",
+              "description": null,
+              "name": "Lamb"
+            },
+            {
+              "color": "blue",
+              "description": null,
+              "name": "Fish"
+            },
+            {
+              "color": "purple",
+              "description": null,
+              "name": "Seafood"
+            },
+            {
+              "color": "orange",
+              "description": null,
+              "name": "Egg"
+            },
+            {
+              "color": "default",
+              "description": null,
+              "name": "Legumes and tofu"
+            },
+            {
+              "color": "green",
+              "description": null,
+              "name": "Vegetarian"
+            }
+          ]
+        },
+        "type": "select"
       },
       "Rating": {
         "description": null,

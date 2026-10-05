@@ -136,7 +136,10 @@ def test_greek_tells_the_model_to_write_greek_and_keep_the_select_values_english
 
     assert "Write in Greek" in prompt
     assert "Write in English" not in prompt
-    assert "cuisine, meal, difficulty and ingredient category stay in English" in prompt
+    assert (
+        "cuisine, meal, category, protein, difficulty and ingredient category stay in English"
+        in prompt
+    )
     assert "never take a Greek abbreviation" in prompt
 
 

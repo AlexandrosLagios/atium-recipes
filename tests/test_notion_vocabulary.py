@@ -35,6 +35,8 @@ class FakeDataSources:
             return {
                 "properties": {
                     "Cuisine": {"type": "select", "select": {"options": [{"name": "Chinese"}]}},
+                    "Category": {"type": "select", "select": {"options": [{"name": "Noodles"}]}},
+                    "Protein": {"type": "select", "select": {"options": [{"name": "Beef"}]}},
                     "Meal": {
                         "type": "multi_select",
                         "multi_select": {"options": [{"name": "Side"}, {"name": "Dinner"}]},
@@ -62,6 +64,8 @@ def test_vocabulary_pages_through_every_ingredient():
     assert vocab.cuisines == ["Chinese"]
     assert vocab.meals == ["Side", "Dinner"]
     assert vocab.categories == ["Staples"]
+    assert vocab.recipe_categories == ["Noodles"]
+    assert vocab.proteins == ["Beef"]
 
 
 def test_vocabulary_adds_the_fixture_properties_the_user_is_missing():
