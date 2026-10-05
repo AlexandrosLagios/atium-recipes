@@ -58,9 +58,9 @@ LANGUAGE_RULES = {
         '"190°C" never take a Greek abbreviation. Only the words beside a quantity are '
         'Greek, such as "μια πρέζα".\n'
         "- cuisine, meal, category, protein, difficulty and ingredient category stay in "
-        "English, spelled the "
-        "way the known options below spell them. They are database values rather than "
-        "text a cook reads, so they are the one exception to the first rule above."
+        "English, spelled the way the known options below spell them. They are database "
+        "values rather than text a cook reads, so they are the one exception to the first "
+        "rule above."
     ),
 }
 
@@ -109,17 +109,17 @@ def _system_prompt(vocab: Vocabulary, base: str) -> str:
             "Known ingredient names:\n" + ", ".join(sorted(vocab.ingredients)),
             "Known cuisines: " + ", ".join(vocab.cuisines),
             "Known meals: " + ", ".join(vocab.meals),
-            _known_classes(vocab),
+            *_known_classes(vocab),
             "Known ingredient categories: " + ", ".join(vocab.categories),
         ]
     )
 
 
-def _known_classes(vocab: Vocabulary) -> str:
-    return (
-        "Known recipe categories: " + ", ".join(vocab.recipe_categories) + "\n"
-        "Known proteins: " + ", ".join(vocab.proteins)
-    )
+def _known_classes(vocab: Vocabulary) -> list[str]:
+    return [
+        "Known recipe categories: " + ", ".join(vocab.recipe_categories),
+        "Known proteins: " + ", ".join(vocab.proteins),
+    ]
 
 
 CLASSIFY_PREAMBLE = (
@@ -242,7 +242,7 @@ class Extractor:
         backfill. Batched, so a long collection never asks for a response the
         model cuts short. A batch the model returns nothing for is left out,
         and a second run picks those recipes up."""
-        system = CLASSIFY_PREAMBLE + "\n\n" + _known_classes(vocab)
+        system = "\n\n".join([CLASSIFY_PREAMBLE, *_known_classes(vocab)])
         tags = []
         for batch in batched(items, CLASSIFY_BATCH):
             result = self.backend.complete(

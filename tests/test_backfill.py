@@ -1,4 +1,5 @@
 import httpx
+import pytest
 from notion_client.errors import APIResponseError
 
 from recipebot import backfill
@@ -115,14 +116,6 @@ def test_only_an_untagged_recipe_is_sent_with_its_ingredient_names():
     ]
 
 
-def test_vocabulary_runs_twice_so_a_property_added_by_the_first_call_has_its_options():
-    store = FakeStore([])
-
-    run({1: store}, [])
-
-    assert store.vocabulary_calls == 2
-
-
 def test_only_the_empty_property_is_filled_and_only_with_a_known_option():
     store = FakeStore([a_page("r1", "Beef Ho Fun", category="Stir-fry")])
 
@@ -150,15 +143,22 @@ def test_a_dry_run_reports_the_tags_and_writes_nothing():
     assert any("Beef Ho Fun" in line and "Noodles" in line and "Beef" in line for line in lines)
 
 
-# A refresh outside the bot rotates the refresh token the bot stores, so the
-# user is skipped and the bot refreshes them on their next message.
-def test_a_revoked_user_is_skipped_and_the_next_user_still_runs():
-    revoked = FakeStore([], error=unauthorized())
+# A refresh outside the bot rotates the refresh token the bot stores, so a
+# revoked user is skipped and the bot refreshes them on their next message.
+@pytest.mark.parametrize(
+    "error, reported",
+    [
+        (unauthorized(), "skip user 1: Notion token expired"),
+        (RuntimeError("boom"), "failed user 1: boom"),
+    ],
+)
+def test_a_failing_user_is_reported_and_the_next_user_still_runs(error, reported):
+    failing = FakeStore([], error=error)
     current = FakeStore([a_page("r1", "Beef Ho Fun")])
 
-    lines, _ = run({1: revoked, 2: current}, [Tag(page_id="r1", category="Noodles", protein="Beef")])
+    lines, _ = run({1: failing, 2: current}, [Tag(page_id="r1", category="Noodles", protein="Beef")])
 
-    assert any("skip" in line and "1" in line for line in lines)
+    assert reported in lines
     assert len(current.client.pages.updated) == 1
 
 
@@ -169,14 +169,4 @@ def test_a_user_whose_databases_are_gone_is_skipped():
 
     assert store.vocabulary_calls == 0
     assert extractor.items == []
-    assert any("skip" in line for line in lines)
-
-
-def test_any_other_failure_is_reported_and_the_next_user_still_runs():
-    broken = FakeStore([], error=RuntimeError("boom"))
-    current = FakeStore([a_page("r1", "Beef Ho Fun")])
-
-    lines, _ = run({1: broken, 2: current}, [Tag(page_id="r1", category="Noodles", protein="Beef")])
-
-    assert any("boom" in line for line in lines)
-    assert len(current.client.pages.updated) == 1
+    assert "skip user 1: databases are gone" in lines

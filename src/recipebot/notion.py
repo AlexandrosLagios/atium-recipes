@@ -114,7 +114,7 @@ def _title_of(page: dict) -> str:
 
 
 # A database that predates the property has no Corrections on its pages until
-# _backfill adds it, so a missing property reads as no corrections.
+# vocabulary() adds it, so a missing property reads as no corrections.
 def corrections_of(page: dict) -> list[str]:
     spans = page["properties"].get("Corrections", {}).get("rich_text", [])
     text = "".join(span["plain_text"] for span in spans)
@@ -414,11 +414,11 @@ class NotionStore:
         ingredients = {
             _title_of(page): page["id"] for page in self._all_pages(self.ingredients_ds)
         }
-        recipes_schema = self.client.data_sources.retrieve(data_source_id=self.recipes_ds)
-        ingredients_schema = self.client.data_sources.retrieve(
-            data_source_id=self.ingredients_ds
+        fixture = load_schema_fixture()
+        recipes_schema = self._schema(self.recipes_ds, fixture["recipes"]["properties"])
+        ingredients_schema = self._schema(
+            self.ingredients_ds, fixture["ingredients"]["properties"]
         )
-        self._backfill(recipes_schema, ingredients_schema)
         return Vocabulary(
             ingredients={name: pid for name, pid in ingredients.items() if name},
             cuisines=_options(recipes_schema, "Cuisine"),
@@ -431,20 +431,16 @@ class NotionStore:
     def recipe_pages(self) -> list[dict]:
         return self._all_pages(self.recipes_ds)
 
-    # ponytail: a select property that was missing entirely reports no options
-    # on this one call, because the schema above predates the backfill. The next
-    # message reads it back in full, so it is not worth a second retrieve.
-    def _backfill(self, recipes_schema: dict, ingredients_schema: dict) -> None:
-        fixture = load_schema_fixture()
-        targets = (
-            (self.recipes_ds, recipes_schema, fixture["recipes"]["properties"]),
-            (self.ingredients_ds, ingredients_schema, fixture["ingredients"]["properties"]),
-        )
-        for data_source_id, schema, properties in targets:
-            missing = _missing_properties(schema, properties)
-            if missing:
-                log.info("adding %s to %s", ", ".join(missing), data_source_id)
-                _apply_properties(self.client, data_source_id, missing)
+    # Read again after a top-up, so a select added just now reports its options
+    # on this same call: the prompt and the writer both use them straight away.
+    def _schema(self, data_source_id: str, fixture: dict) -> dict:
+        schema = self.client.data_sources.retrieve(data_source_id=data_source_id)
+        missing = _missing_properties(schema, fixture)
+        if not missing:
+            return schema
+        log.info("adding %s to %s", ", ".join(missing), data_source_id)
+        _apply_properties(self.client, data_source_id, missing)
+        return self.client.data_sources.retrieve(data_source_id=data_source_id)
 
     def find_by_url(self, url: str) -> dict | None:
         target = canonical_url(url)
