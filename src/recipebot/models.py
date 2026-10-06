@@ -62,6 +62,8 @@ class ExtractedRecipe(BaseModel):
     name: str
     cuisine: str
     meal: list[str]
+    category: str = ""
+    protein: str = ""
     difficulty: Literal["Easy", "Hard"]
     time_min: int
     keeps_days: int = 0

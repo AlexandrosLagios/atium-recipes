@@ -197,15 +197,22 @@ def write_recipe(
 
 
 def preview_text(recipe: Recipe, plan: IngredientPlan, language: str) -> str:
-    # Cuisine, meal and difficulty are the Notion database's own select values,
-    # so they read in English whatever the user chose; translating them here
-    # would disagree with the page the user opens.
+    # Cuisine, category, protein, meal and difficulty are the Notion database's
+    # own select values, so they read in English whatever the user chose;
+    # translating them here would disagree with the page the user opens.
+    labels = [
+        recipe.cuisine,
+        recipe.category,
+        recipe.protein,
+        ", ".join(recipe.meal),
+        recipe.difficulty,
+    ]
     facts = t(language, "preview_facts", time_min=recipe.time_min, servings=recipe.servings)
     if recipe.keeps_days:
         facts += t(language, "preview_keeps", days=recipe.keeps_days)
     lines = [
         recipe.name,
-        f"{recipe.cuisine} | {', '.join(recipe.meal)} | {recipe.difficulty}",
+        " | ".join(filter(None, labels)),
         facts,
         "",
         t(language, "preview_ingredients", items=", ".join(i.name for i in recipe.ingredients)),

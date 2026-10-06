@@ -1,6 +1,6 @@
 import pytest
 
-from recipebot.llm import Extractor, ImagePart, TextPart, image_block, text_block
+from recipebot.llm import Extractor, ImagePart, Tag, Tags, TextPart, image_block, text_block
 from recipebot.models import ExtractedRecipe, Ingredient, Recipe, RecipePatch
 from recipebot.notion import Vocabulary
 
@@ -163,6 +163,40 @@ def test_the_vocabulary_reaches_the_system_prompt():
     assert "Chicken" in backend.systems[0]
     assert "Dinner" in backend.systems[0]
     assert "Staples" in backend.systems[0]
+
+
+def test_the_recipe_categories_and_proteins_reach_the_system_prompt():
+    backend = FakeBackend([FULL])
+    vocab = VOCAB.model_copy(update={"recipe_categories": ["Noodles"], "proteins": ["Beef"]})
+
+    Extractor(backend).extract([text_block("body")], vocab)
+
+    assert "Known recipe categories: Noodles" in backend.systems[0]
+    assert "Known proteins: Beef" in backend.systems[0]
+
+
+def test_classify_sends_each_batch_to_the_strong_model_and_joins_the_tags():
+    items = [{"page_id": f"p{i}", "name": f"Dish {i}"} for i in range(51)]
+    backend = FakeBackend(
+        [
+            Tags(recipes=[Tag(page_id="p0", category="Noodles", protein="Beef")]),
+            Tags(recipes=[Tag(page_id="p50", category="Salad", protein="Vegetarian")]),
+        ]
+    )
+
+    tags = Extractor(backend).classify(items, VOCAB)
+
+    assert [t.page_id for t in tags] == ["p0", "p50"]
+    assert backend.models == [STRONG, STRONG]
+    assert backend.schemas == [Tags, Tags]
+    assert '"p49"' in backend.parts[0][0].text
+    assert '"p50"' in backend.parts[1][0].text
+
+
+def test_a_batch_the_model_returns_nothing_for_contributes_no_tags():
+    backend = FakeBackend([None])
+
+    assert Extractor(backend).classify([{"page_id": "p0", "name": "Dish"}], VOCAB) == []
 
 
 def test_the_parts_reach_the_backend_unchanged():

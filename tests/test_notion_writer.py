@@ -463,3 +463,32 @@ def test_create_recipe_leaves_the_corrections_property_empty_when_there_are_none
     store.create_recipe(a_recipe(), ["p2"], VOCAB)
 
     assert client.pages.created[0]["properties"]["Corrections"]["rich_text"] == []
+
+
+CLASSIFIED_VOCAB = VOCAB.model_copy(
+    update={"recipe_categories": ["Noodles", "Stir-fry"], "proteins": ["Beef", "Vegetarian"]}
+)
+
+
+def test_create_recipe_writes_a_known_category_and_protein_in_their_known_spelling():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(category="noodles", protein="Beef"), [], CLASSIFIED_VOCAB)
+
+    props = client.pages.created[0]["properties"]
+    assert props["Category"] == {"select": {"name": "Noodles"}}
+    assert props["Protein"] == {"select": {"name": "Beef"}}
+
+
+# Both are closed vocabularies like Meal, so a value the schema lacks is
+# dropped rather than minted as a new option.
+def test_create_recipe_omits_a_category_and_a_protein_that_match_no_option():
+    client = FakeClient()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    store.create_recipe(a_recipe(category="Tacos", protein=""), [], CLASSIFIED_VOCAB)
+
+    props = client.pages.created[0]["properties"]
+    assert "Category" not in props
+    assert "Protein" not in props

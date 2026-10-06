@@ -130,6 +130,20 @@ def test_preview_text_shows_the_fields_the_user_must_check():
     assert "Chicken" in text
 
 
+def test_preview_text_names_the_category_and_the_protein_beside_the_cuisine():
+    text = bot.preview_text(
+        a_recipe(category="Braise and stew", protein="Chicken"), IngredientPlan(), "en"
+    )
+
+    assert "Chinese | Braise and stew | Chicken | Dinner | Easy" in text
+
+
+def test_preview_text_skips_an_empty_category_and_protein():
+    text = bot.preview_text(a_recipe(), IngredientPlan(), "en")
+
+    assert "Chinese | Dinner | Easy" in text
+
+
 def test_preview_text_names_the_near_match():
     plan = IngredientPlan(near={"Soy Sauces": "Soy sauce"})
 

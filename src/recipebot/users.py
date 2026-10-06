@@ -66,13 +66,18 @@ class UserStore:
                     "ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"
                 )
 
-    def get(self, telegram_user_id: int) -> UserRecord | None:
+    def _records(self, where: str = "", params: tuple = ()) -> list[UserRecord]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM users WHERE telegram_user_id = ?", (telegram_user_id,)
-            ).fetchone()
-        return UserRecord(**{column: row[column] for column in _COLUMNS}) if row else None
+            rows = conn.execute(f"SELECT * FROM users {where}", params).fetchall()
+        return [UserRecord(**{column: row[column] for column in _COLUMNS}) for row in rows]
+
+    def get(self, telegram_user_id: int) -> UserRecord | None:
+        found = self._records("WHERE telegram_user_id = ?", (telegram_user_id,))
+        return found[0] if found else None
+
+    def all(self) -> list[UserRecord]:
+        return self._records()
 
     def save(self, record: UserRecord) -> None:
         placeholders = ", ".join("?" for _ in _COLUMNS)

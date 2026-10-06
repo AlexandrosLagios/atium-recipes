@@ -1,4 +1,6 @@
+import json
 from dataclasses import dataclass
+from itertools import batched
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -7,6 +9,11 @@ from .config import Config
 from .models import ExtractedRecipe, RecipePatch
 from .notion import Vocabulary
 from .strings import DEFAULT as DEFAULT_LANGUAGE
+
+# Shared by extraction and by the backfill's classify call, so a recipe saved
+# today and one tagged after the fact follow the same rule.
+CLASSIFY_RULES = """- category is the one known recipe category that names the dish on the plate. A stir-fried noodle dish such as Beef Ho Fun is "Noodles", never "Stir-fry". Leave it empty when no known category fits, and never invent one.
+- protein is the one known protein the dish is built around. Where a dish holds two, choose the one that dominates. Choose "Vegetarian" only when no other known protein fits and the dish holds no meat or fish. Never choose "Egg" for an egg used in baking or as a binder: pancakes are "Vegetarian", never "Egg"."""
 
 RULES = """Rules you must follow:
 - Ingredient names are shopping level and singular: what you pick off the shelf, never a plural such as "Chickens". Keep a word that names a different product: "Pork belly", "Ground beef", and "Chicken thigh", never "Pork", "Beef", or "Chicken". Drop a word that only describes the preparation, and put it with the quantity instead: "2 boneless chicken thighs, sliced" is "Chicken thigh" at "2, boneless and sliced".
@@ -19,8 +26,9 @@ RULES = """Rules you must follow:
 - group is the source's own heading for a block of ingredients, such as "Sauce", "Marinade" or "Dip". Set the same short label on every ingredient under that heading, and drop any trailing colon. Leave it empty when the source gives one undivided list.
 - Reuse an ingredient name from the known list below whenever the ingredient matches. Mint a new name only when the ingredient is genuinely new.
 - cuisine is an open list, so a dish whose cuisine is missing from the known options below takes a new value. Never file a dish under a neighbouring country because that country is a known option: the cuisine of Vietnamese Shaking Beef is "Vietnamese", never "Chinese".
-- Choose meal and ingredient category values from the known options below whenever one fits. A value must never contain a comma.
+- Choose meal, category, protein and ingredient category values from the known options below whenever one fits. A value must never contain a comma.
 - meal holds every option the dish fits, not only the best one: a pasta bake is Lunch and Dinner, a brownie is Dessert and Snack, a cake is Dessert alone.
+""" + CLASSIFY_RULES + """
 - time_min is the total time in minutes including resting, marinating, and chilling. An overnight rest is at least 480 minutes.
 - keeps_days is how many days the finished dish keeps: in the fridge, or at room temperature for a dish that lives in a jar or a tin, such as cookies or roasted nuts. Use the figure the recipe states. Most recipes state none, so estimate from 3 to 4 days for a cooked dish. A pickled or a marinated dish keeps 5 to 7 days. A dish whose texture fails before it spoils, such as rice noodles or anything fried and crisp, keeps 2 to 3 days. Use 0 when the dish has to be eaten straight away.
 - difficulty is "Easy" unless the recipe needs a technique a home cook would have to practise, in which case it is "Hard".
@@ -49,9 +57,10 @@ LANGUAGE_RULES = {
         "- A unit keeps the spelling the rules above give it, so \"200 g\", \"1.5 tbsp\" and "
         '"190°C" never take a Greek abbreviation. Only the words beside a quantity are '
         'Greek, such as "μια πρέζα".\n'
-        "- cuisine, meal, difficulty and ingredient category stay in English, spelled the "
-        "way the known options below spell them. They are database values rather than "
-        "text a cook reads, so they are the one exception to the first rule above."
+        "- cuisine, meal, category, protein, difficulty and ingredient category stay in "
+        "English, spelled the way the known options below spell them. They are database "
+        "values rather than text a cook reads, so they are the one exception to the first "
+        "rule above."
     ),
 }
 
@@ -100,9 +109,40 @@ def _system_prompt(vocab: Vocabulary, base: str) -> str:
             "Known ingredient names:\n" + ", ".join(sorted(vocab.ingredients)),
             "Known cuisines: " + ", ".join(vocab.cuisines),
             "Known meals: " + ", ".join(vocab.meals),
+            *_known_classes(vocab),
             "Known ingredient categories: " + ", ".join(vocab.categories),
         ]
     )
+
+
+def _known_classes(vocab: Vocabulary) -> list[str]:
+    return [
+        "Known recipe categories: " + ", ".join(vocab.recipe_categories),
+        "Known proteins: " + ", ".join(vocab.proteins),
+    ]
+
+
+CLASSIFY_PREAMBLE = (
+    "You classify saved recipes. The user gives you a JSON list of recipes, each "
+    "with a page_id, a name, a cuisine and its ingredient names. Return one entry "
+    "per recipe with the same page_id.\n\n"
+    "Rules you must follow:\n"
+    + CLASSIFY_RULES
+    + "\n- Spell category and protein the way the known options below spell them, "
+    "in English, even where the recipe name is in another language."
+)
+
+CLASSIFY_BATCH = 50
+
+
+class Tag(BaseModel):
+    page_id: str
+    category: str = ""
+    protein: str = ""
+
+
+class Tags(BaseModel):
+    recipes: list[Tag]
 
 
 @dataclass(frozen=True)
@@ -196,3 +236,21 @@ class Extractor:
         changes = result.model_dump(exclude_none=True)
         # Rebuild rather than model_copy, so every validator runs on the merge.
         return type(current)(**{**current.model_dump(), **changes})
+
+    def classify(self, items: list[dict], vocab: Vocabulary) -> list[Tag]:
+        """Tag saved recipes from their name and ingredients alone, for the
+        backfill. Batched, so a long collection never asks for a response the
+        model cuts short. A batch the model returns nothing for is left out,
+        and a second run picks those recipes up."""
+        system = "\n\n".join([CLASSIFY_PREAMBLE, *_known_classes(vocab)])
+        tags = []
+        for batch in batched(items, CLASSIFY_BATCH):
+            result = self.backend.complete(
+                self.backend.strong,
+                system,
+                [text_block(json.dumps(list(batch), ensure_ascii=False))],
+                Tags,
+            )
+            if result:
+                tags += result.recipes
+        return tags

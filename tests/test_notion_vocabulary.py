@@ -35,6 +35,8 @@ class FakeDataSources:
             return {
                 "properties": {
                     "Cuisine": {"type": "select", "select": {"options": [{"name": "Chinese"}]}},
+                    "Category": {"type": "select", "select": {"options": [{"name": "Noodles"}]}},
+                    "Protein": {"type": "select", "select": {"options": [{"name": "Beef"}]}},
                     "Meal": {
                         "type": "multi_select",
                         "multi_select": {"options": [{"name": "Side"}, {"name": "Dinner"}]},
@@ -62,6 +64,8 @@ def test_vocabulary_pages_through_every_ingredient():
     assert vocab.cuisines == ["Chinese"]
     assert vocab.meals == ["Side", "Dinner"]
     assert vocab.categories == ["Staples"]
+    assert vocab.recipe_categories == ["Noodles"]
+    assert vocab.proteins == ["Beef"]
 
 
 def test_vocabulary_adds_the_fixture_properties_the_user_is_missing():
@@ -98,6 +102,32 @@ def test_vocabulary_updates_nothing_when_the_user_is_already_current():
     store.vocabulary()
 
     assert client.data_sources.updates == []
+
+
+class CatchingUpDataSources(UpToDateDataSources):
+    """A user whose Recipes predates Category: the schema shows it only once
+    the top-up has sent it."""
+
+    def retrieve(self, data_source_id):
+        schema = super().retrieve(data_source_id)
+        sent = {name for _, properties in self.updates for name in properties}
+        if data_source_id == "ds-recipes" and "Category" not in sent:
+            schema["properties"] = {
+                k: v for k, v in schema["properties"].items() if k != "Category"
+            }
+        return schema
+
+
+# The prompt and the writer use the options straight away, so a user's first
+# message after a deploy must not see an empty list.
+def test_a_select_added_by_the_top_up_reports_its_options_on_the_same_call():
+    client = FakeClient()
+    client.data_sources = CatchingUpDataSources()
+    store = NotionStore(client, "ds-recipes", "ds-ingredients")
+
+    vocab = store.vocabulary()
+
+    assert "Noodles" in vocab.recipe_categories
 
 
 class MalformedDataSources:

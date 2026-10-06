@@ -30,6 +30,17 @@ def test_a_saved_user_is_read_back(tmp_path):
     assert store.get(1) == a_record()
 
 
+def test_all_returns_every_connected_user(tmp_path):
+    store = UserStore(str(tmp_path / "users.db"))
+    store.save(a_record())
+    store.save(a_record(telegram_user_id=2, recipes_ds="ds-r2"))
+
+    assert sorted(store.all(), key=lambda r: r.telegram_user_id) == [
+        a_record(),
+        a_record(telegram_user_id=2, recipes_ds="ds-r2"),
+    ]
+
+
 def test_saving_the_same_id_again_replaces_the_row(tmp_path):
     store = UserStore(str(tmp_path / "users.db"))
     store.save(a_record())
