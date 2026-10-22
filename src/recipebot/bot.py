@@ -31,6 +31,7 @@ from .notion import (
     corrections_of,
     reconcile_ingredients,
 )
+from .scrape import PageBlocked
 from .social import SocialBlocked
 from .strings import (
     DEFAULT as DEFAULT_LANGUAGE,
@@ -354,7 +355,7 @@ async def on_reimport(action: str, token: str, update, context) -> None:
             recipe = await asyncio.to_thread(
                 from_url, job.source_url, extractor, vocab, language
             )
-        except SocialBlocked:
+        except (SocialBlocked, PageBlocked):
             await query.message.reply_text(t(language, "blocked"))
             return
     else:
@@ -542,7 +543,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             recipe = await asyncio.to_thread(from_url, url, extractor, vocab, language)
         else:
             recipe = await asyncio.to_thread(from_text, text, extractor, vocab, language)
-    except SocialBlocked:
+    except (SocialBlocked, PageBlocked):
         await update.message.reply_text(t(language, "blocked"))
         return
 

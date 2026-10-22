@@ -10,6 +10,7 @@ from recipebot import bot
 from recipebot.config import Config
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import Vocabulary
+from recipebot.scrape import PageBlocked
 from recipebot.social import SocialBlocked
 from recipebot.strings import t
 from recipebot.users import UserRecord
@@ -174,6 +175,20 @@ async def test_a_blocked_instagram_url_asks_for_a_screenshot(monkeypatch):
     monkeypatch.setattr(bot, "from_url", blocked)
     store = FakeStore()
     update = make_update(text="https://www.instagram.com/p/abc/")
+
+    await bot.on_text(update, make_context(store, object()))
+
+    assert store.saved == []
+    assert "screenshot" in update.message.reply_text.call_args[0][0].lower()
+
+
+async def test_a_blocked_web_page_asks_for_a_screenshot(monkeypatch):
+    def blocked(*args, **kwargs):
+        raise PageBlocked("403 Forbidden")
+
+    monkeypatch.setattr(bot, "from_url", blocked)
+    store = FakeStore()
+    update = make_update(text="https://redhousespice.com/dan-dan-noodles/")
 
     await bot.on_text(update, make_context(store, object()))
 

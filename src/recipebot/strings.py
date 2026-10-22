@@ -65,8 +65,8 @@ TEXT = {
         "el": "Αποσυνδέθηκες. Στείλε μου ένα μήνυμα για να συνδέσεις ξανά λογαριασμό Notion.",
     },
     "blocked": {
-        "en": "I could not open that post. Send me a screenshot of it and I will read that instead.",
-        "el": "Δεν μπόρεσα να ανοίξω αυτή την ανάρτηση. Στείλε μου ένα στιγμιότυπο οθόνης και θα διαβάσω αυτό.",
+        "en": "I could not open that link. Send me a screenshot of it, or paste the text, and I will read that instead.",
+        "el": "Δεν μπόρεσα να ανοίξω αυτόν τον σύνδεσμο. Στείλε μου ένα στιγμιότυπο οθόνης ή επικόλλησε το κείμενο, και θα διαβάσω αυτό.",
     },
     "no_recipe": {
         "en": "I could not find a recipe in that.",
