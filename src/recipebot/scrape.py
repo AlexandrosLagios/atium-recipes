@@ -38,12 +38,31 @@ class ScrapeResult(BaseModel):
         )
 
 
-def fetch_html(url: str) -> str:
-    response = httpx.get(
-        url, follow_redirects=True, timeout=20.0, headers={"User-Agent": USER_AGENT}
-    )
+WAYBACK = "https://web.archive.org/web/2id_/"
+
+
+class PageBlocked(Exception):
+    """Neither the site nor the Wayback Machine served the page."""
+
+
+def _get(url: str, headers: dict | None = None) -> str:
+    response = httpx.get(url, follow_redirects=True, timeout=20.0, headers=headers)
     response.raise_for_status()
     return response.text
+
+
+def fetch_html(url: str) -> str:
+    try:
+        return _get(url, {"User-Agent": USER_AGENT})
+    except httpx.HTTPError as exc:
+        log.info("direct fetch failed for %s, trying the Wayback Machine: %s", url, exc)
+    # Cloudflare challenges the VPS's datacenter IP whatever the client sends, so
+    # the latest archived copy is the only route to those sites. Wayback answers
+    # 429 to the spoofed browser agent, so this request goes out with httpx's own.
+    try:
+        return _get(WAYBACK + url)
+    except httpx.HTTPError as exc:
+        raise PageBlocked(str(exc)) from exc
 
 
 def _first_int(value) -> int:
