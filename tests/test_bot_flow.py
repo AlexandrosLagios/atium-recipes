@@ -8,6 +8,7 @@ from telegram.ext import filters
 
 from recipebot import bot
 from recipebot.config import Config
+from recipebot.llm import ModelBusy
 from recipebot.models import Ingredient, Recipe
 from recipebot.notion import Vocabulary
 from recipebot.scrape import PageBlocked
@@ -349,6 +350,16 @@ async def test_on_error_replies_to_a_user_allowed_only_in_the_database():
     await bot.on_error(update, context)
 
     update.message.reply_text.assert_awaited_once_with(t("en", "error"))
+
+
+async def test_on_error_says_the_model_is_busy_on_an_overload():
+    update = make_update(text="hi")
+    context = make_context(FakeStore(), object())
+    context.error = ModelBusy("503 UNAVAILABLE")
+
+    await bot.on_error(update, context)
+
+    update.message.reply_text.assert_awaited_once_with(t("en", "busy"))
 
 
 async def test_on_error_offers_the_connect_button_when_the_databases_are_gone(monkeypatch):

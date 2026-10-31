@@ -185,6 +185,12 @@ class Backend(Protocol):
 
     def is_rate_limited(self, exc: Exception) -> bool: ...
 
+    def is_overloaded(self, exc: Exception) -> bool: ...
+
+
+class ModelBusy(Exception):
+    """The provider rate limited or shed the call. A retry later can succeed."""
+
 
 class Extractor:
     def __init__(self, backend: Backend):
@@ -209,7 +215,11 @@ class Extractor:
             except self.backend.api_error as exc:
                 # Escalating on a rate limit would promote every later message
                 # to the expensive model for as long as the limit holds.
-                if last or self.backend.is_rate_limited(exc):
+                if self.backend.is_rate_limited(exc) or (
+                    last and self.backend.is_overloaded(exc)
+                ):
+                    raise ModelBusy(str(exc)) from exc
+                if last:
                     raise
                 continue
             if result and result.ingredients and result.method:
@@ -225,12 +235,17 @@ class Extractor:
         # Only the extracted fields. Sending source_text back would pay for the
         # whole page again and hand the model a second set of figures.
         recipe_json = current.model_dump_json(include=set(ExtractedRecipe.model_fields))
-        result = self.backend.complete(
-            self.backend.strong,
-            _system_prompt(vocab, patch_prompt_for(language)),
-            [text_block(f"Recipe JSON:\n{recipe_json}\n\nCorrection: {instruction}")],
-            RecipePatch,
-        )
+        try:
+            result = self.backend.complete(
+                self.backend.strong,
+                _system_prompt(vocab, patch_prompt_for(language)),
+                [text_block(f"Recipe JSON:\n{recipe_json}\n\nCorrection: {instruction}")],
+                RecipePatch,
+            )
+        except self.backend.api_error as exc:
+            if self.backend.is_rate_limited(exc) or self.backend.is_overloaded(exc):
+                raise ModelBusy(str(exc)) from exc
+            raise
         if result is None:
             return None
         changes = result.model_dump(exclude_none=True)

@@ -22,7 +22,7 @@ from telegram.ext import (
 from . import callback_server, oauth
 from .config import Config
 from .extract import from_photo, from_text, from_url, source_for
-from .llm import Extractor
+from .llm import Extractor, ModelBusy
 from .models import Recipe
 from .notion import (
     IngredientPlan,
@@ -493,7 +493,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         text, markup = connect_prompt(user.id, cfg, language, "databases_missing")
         await message.reply_text(text, reply_markup=markup)
         return
-    await message.reply_text(t(language, "error"))
+    key = "busy" if isinstance(context.error, ModelBusy) else "error"
+    await message.reply_text(t(language, key))
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

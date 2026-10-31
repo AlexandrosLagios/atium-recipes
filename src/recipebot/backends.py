@@ -78,6 +78,9 @@ class AnthropicBackend:
     def is_rate_limited(self, exc: Exception) -> bool:
         return isinstance(exc, anthropic.APIStatusError) and exc.status_code == 429
 
+    def is_overloaded(self, exc: Exception) -> bool:
+        return isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500
+
 
 def _gemini_part(part: Part) -> types.Part:
     if isinstance(part, ImagePart):
@@ -125,6 +128,9 @@ class GeminiBackend:
 
     def is_rate_limited(self, exc: Exception) -> bool:
         return isinstance(exc, errors.APIError) and exc.code == 429
+
+    def is_overloaded(self, exc: Exception) -> bool:
+        return isinstance(exc, errors.ServerError)
 
 
 def backend_from_config(cfg: Config) -> Backend:
