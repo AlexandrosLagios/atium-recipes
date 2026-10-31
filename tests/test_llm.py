@@ -1,6 +1,6 @@
 import pytest
 
-from recipebot.llm import Extractor, ImagePart, Tag, Tags, TextPart, image_block, text_block
+from recipebot.llm import Extractor, ImagePart, ModelBusy, Tag, Tags, TextPart, image_block, text_block
 from recipebot.models import ExtractedRecipe, Ingredient, Recipe, RecipePatch
 from recipebot.notion import Vocabulary
 
@@ -61,6 +61,9 @@ class FakeBackend:
     def is_rate_limited(self, exc):
         return exc.status == 429
 
+    def is_overloaded(self, exc):
+        return exc.status >= 500
+
 
 def test_the_fast_model_alone_is_enough_when_the_parse_is_complete():
     backend = FakeBackend([FULL])
@@ -115,16 +118,25 @@ def test_an_api_error_on_the_fast_model_escalates():
 def test_a_rate_limit_on_the_fast_model_raises_and_never_escalates():
     backend = FakeBackend([FakeApiError(429), FULL])
 
-    with pytest.raises(FakeApiError):
+    with pytest.raises(ModelBusy):
         Extractor(backend).extract([text_block("body")], VOCAB)
 
     assert backend.models == [FAST]
 
 
 def test_an_api_error_on_the_strong_model_is_raised():
-    backend = FakeBackend([EMPTY, FakeApiError(500)])
+    backend = FakeBackend([EMPTY, FakeApiError(400)])
 
     with pytest.raises(FakeApiError):
+        Extractor(backend).extract([text_block("body")], VOCAB)
+
+    assert backend.models == [FAST, STRONG]
+
+
+def test_an_overload_on_both_models_raises_model_busy():
+    backend = FakeBackend([FakeApiError(503), FakeApiError(503)])
+
+    with pytest.raises(ModelBusy):
         Extractor(backend).extract([text_block("body")], VOCAB)
 
     assert backend.models == [FAST, STRONG]
@@ -133,7 +145,7 @@ def test_an_api_error_on_the_strong_model_is_raised():
 def test_a_rate_limit_on_the_strong_model_is_raised():
     backend = FakeBackend([EMPTY, FakeApiError(429)])
 
-    with pytest.raises(FakeApiError):
+    with pytest.raises(ModelBusy):
         Extractor(backend).extract([text_block("body")], VOCAB)
 
     assert backend.models == [FAST, STRONG]
@@ -241,6 +253,13 @@ def test_a_patch_over_a_recipe_keeps_the_fields_a_recipe_adds():
     assert result.source_url == "https://example.com/p"
     assert result.source_text == "the page"
     assert result.servings == 2
+
+
+def test_an_overload_during_a_patch_raises_model_busy():
+    backend = FakeBackend([FakeApiError(503)])
+
+    with pytest.raises(ModelBusy):
+        Extractor(backend).patch(FULL, "servings is 2", VOCAB)
 
 
 def test_a_patch_runs_once_on_the_strong_model():

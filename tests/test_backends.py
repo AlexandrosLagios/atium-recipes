@@ -139,6 +139,15 @@ def test_anthropic_recognises_a_rate_limit():
     assert backend.is_rate_limited(RuntimeError("unrelated")) is False
 
 
+def test_anthropic_recognises_an_overload():
+    backend = AnthropicBackend(FakeAnthropicClient())
+
+    assert backend.is_overloaded(anthropic_error(529)) is True
+    assert backend.is_overloaded(anthropic_error(500)) is True
+    assert backend.is_overloaded(anthropic_error(429)) is False
+    assert backend.is_overloaded(RuntimeError("unrelated")) is False
+
+
 def test_anthropic_owns_its_sdk_error_type():
     assert AnthropicBackend.api_error == (anthropic.APIStatusError,)
 
@@ -227,6 +236,14 @@ def test_gemini_recognises_a_rate_limit():
     assert backend.is_rate_limited(errors.ClientError(400, {})) is False
     assert backend.is_rate_limited(errors.ServerError(500, {})) is False
     assert backend.is_rate_limited(RuntimeError("unrelated")) is False
+
+
+def test_gemini_recognises_an_overload():
+    backend = GeminiBackend(FakeGeminiClient())
+
+    assert backend.is_overloaded(errors.ServerError(503, {})) is True
+    assert backend.is_overloaded(errors.ClientError(429, {})) is False
+    assert backend.is_overloaded(RuntimeError("unrelated")) is False
 
 
 def test_gemini_owns_its_sdk_error_type():

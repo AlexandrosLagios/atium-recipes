@@ -84,6 +84,10 @@ TEXT = {
         "en": "Something went wrong handling that. Try again, or send it a different way.",
         "el": "Κάτι πήγε στραβά. Δοκίμασε ξανά, ή στείλ' το με άλλον τρόπο.",
     },
+    "busy": {
+        "en": "The recipe reader is overloaded right now. Send it again in a few minutes.",
+        "el": "Ο αναγνώστης συνταγών έχει υπερφόρτωση αυτή τη στιγμή. Στείλ' το ξανά σε λίγα λεπτά.",
+    },
     "expired": {
         "en": "I no longer have that preview. Share the recipe again.",
         "el": "Δεν έχω πια αυτή την προεπισκόπηση. Στείλε ξανά τη συνταγή.",
