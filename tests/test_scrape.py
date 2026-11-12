@@ -48,6 +48,19 @@ def test_as_prompt_carries_every_field():
     assert "745" in prompt
 
 
+def test_as_prompt_puts_each_group_heading_above_its_ingredients():
+    prompt = ScrapeResult(
+        name="Lo mein",
+        ingredients=["12 ounces flank steak", "1 tablespoon oyster sauce"],
+        groups=[
+            ("For the beef:", ["12 ounces flank steak"]),
+            ("For the sauce:", ["1 tablespoon oyster sauce"]),
+        ],
+    ).as_prompt()
+
+    assert "For the beef:\n- 12 ounces flank steak\nFor the sauce:\n- 1 tablespoon oyster sauce" in prompt
+
+
 def test_readable_text_returns_the_article_body():
     text = readable_text(PLAIN, "https://example.com/stew")
 
