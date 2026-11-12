@@ -19,9 +19,19 @@ class ScrapeResult(BaseModel):
     time_min: int = 0
     servings: int = 0
     ingredients: list[str] = []
+    groups: list[tuple[str, list[str]]] = []
     method: list[str] = []
     image_url: str = ""
     cuisine: str = ""
+
+    def _ingredient_lines(self) -> list[str]:
+        groups = self.groups if len(self.groups) > 1 else [("", self.ingredients)]
+        lines = []
+        for heading, items in groups:
+            if heading:
+                lines.append(heading)
+            lines += [f"- {item}" for item in items]
+        return lines
 
     def as_prompt(self) -> str:
         return "\n".join(
@@ -31,7 +41,7 @@ class ScrapeResult(BaseModel):
                 f"Servings: {self.servings}",
                 f"Cuisine hint: {self.cuisine}",
                 "Ingredient lines:",
-                *(f"- {line}" for line in self.ingredients),
+                *self._ingredient_lines(),
                 "Method:",
                 *(f"{n}. {step}" for n, step in enumerate(self.method, 1)),
             ]
@@ -95,6 +105,10 @@ def scrape_jsonld(html: str, url: str) -> ScrapeResult | None:
         time_min=_first_int(optional("total_time", 0)),
         servings=_first_int(optional("yields")),
         ingredients=ingredients,
+        groups=[
+            (group.purpose or "", group.ingredients)
+            for group in optional("ingredient_groups", [])
+        ],
         method=method,
         image_url=optional("image"),
         cuisine=optional("cuisine"),

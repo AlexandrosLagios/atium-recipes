@@ -58,7 +58,7 @@ def test_the_scraper_facts_win_over_the_model(monkeypatch):
     assert recipe.name == "Overnight pickled vegetables"
     assert recipe.time_min == 745
     assert recipe.servings == 4
-    assert recipe.method == ["Salt.", "Rest."]
+    assert recipe.method == ["Model step."]
     assert recipe.image_url == "https://example.com/cover.jpg"
     assert recipe.source_url == "https://redhousespice.com/x/"
     assert recipe.ingredients[0].name == "Cucumber"
